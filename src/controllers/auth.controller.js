@@ -276,3 +276,61 @@ export async function resetPassword(req, res) {
         message: "Password reset successfully"
     });
 }
+
+export async function changePassword(req, res) {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+        return res.status(400).json({
+            message: "Current password and new password are required"
+        });
+    }
+
+    const token = req.headers.authorization?.split(" ")[1];
+
+    if (!token) {
+        return res.status(401).json({
+            message: "No token provided"
+        });
+    }
+
+    const decoded = jwt.verify(token, config.JWT_SECRET);
+
+    const user = await userModel.findById(decoded.id);
+
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        });
+    }
+
+    const currentPasswordHash = crypto
+        .createHash("sha256")
+        .update(currentPassword)
+        .digest("hex");
+
+    if (currentPasswordHash !== user.password) {
+        return res.status(401).json({
+            message: "Current password is incorrect"
+        });
+    }
+
+    const newPasswordHash = crypto
+        .createHash("sha256")
+        .update(newPassword)
+        .digest("hex");
+
+    user.password = newPasswordHash;
+
+    await user.save();
+
+    await sessionModel.updateMany(
+        { userId: user._id, revoked: false },
+        { revoked: true }
+    );
+
+    res.status(200).json({
+        message: "Password changed successfully"
+    });
+}
+

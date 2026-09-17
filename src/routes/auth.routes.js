@@ -53,4 +53,9 @@ authRouter.post("/forgot-password", authController.forgotPassword);
 authRouter.post("/reset-password", authController.resetPassword);
 
 
+/** * POST /api/auth/change-password
+ */
+authRouter.post("/change-password", authController.changePassword);
+
+
 export default authRouter;
