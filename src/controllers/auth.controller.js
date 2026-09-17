@@ -334,3 +334,63 @@ export async function changePassword(req, res) {
     });
 }
 
+export async function resendOtp(req, res) {
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({
+            message: "Email is required"
+        });
+    }
+
+    const user = await userModel.findOne({ email });
+
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        });
+    }
+
+    if (user.verified) {
+        return res.status(400).json({
+            message: "Email is already verified"
+        });
+    }
+
+    await otpModel.deleteMany({
+        email,
+        user: user._id
+    });
+
+    const otp = generateOtp();
+
+    const otpHash = crypto
+        .createHash("sha256")
+        .update(otp)
+        .digest("hex");
+
+    await otpModel.create({
+        email,
+        user: user._id,
+        otpHash
+    });
+
+    const otpUrl = `http://localhost:3000/api/auth/verify-otp?email=${email}&otp=${otp}`;
+
+    await sendEmail(
+    email,
+    "OTP Verification",
+    `Your OTP is: ${otp}. Use this OTP to verify your email.`,
+    `
+        <p>Your email verification OTP is:</p>
+        <h2>${otp}</h2>
+        <p>Enter this OTP in the verification request to verify your email.</p>
+        <p>Or use this verification link:</p>
+        <a href="${otpUrl}">${otpUrl}</a>
+    `
+);
+
+res.status(200).json({
+    message: "OTP sent successfully"
+});
+}

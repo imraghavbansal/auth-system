@@ -58,4 +58,9 @@ authRouter.post("/reset-password", authController.resetPassword);
 authRouter.post("/change-password", authController.changePassword);
 
 
+/** * POST /api/auth/resend-otp
+ */
+authRouter.post("/resend-otp", authController.resendOtp);
+
+
 export default authRouter;
