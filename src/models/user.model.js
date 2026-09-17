@@ -19,7 +19,15 @@ const userSchema = new mongoose.Schema({
     verified: {
         type: Boolean,
         default: false
-    }
+    },
+    resetPasswordToken: {
+    type: String,
+    default: null
+    },
+    resetPasswordTokenExpiresAt: {
+    type: Date,
+    default: null
+}
 })
 
 const userModel = mongoose.model("Users", userSchema);

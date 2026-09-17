@@ -180,3 +180,99 @@ export async function verifyEmail(req, res) {
         verified: user.verified
     }});
 }
+
+export async function forgotPassword(req, res) {
+    const { email } = req.body;
+
+    const user = await userModel.findOne({ email });
+
+    if (!user) {
+        return res.status(404).json({ message: "User not found" });
+    }
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+
+    const resetTokenHash = crypto
+        .createHash("sha256")
+        .update(resetToken)
+        .digest("hex");
+
+    user.resetPasswordToken = resetTokenHash;
+    user.resetPasswordTokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    await user.save();
+
+    const resetUrl = `http://localhost:3000/api/auth/reset-password?token=${resetToken}&email=${email}`;
+
+    await sendEmail(
+        email,
+        "Password Reset",
+        `Reset your password using this link: ${resetUrl}`,
+        `<p>Reset your password using this link:</p><a href="${resetUrl}">${resetUrl}</a>`
+    );
+
+    res.status(200).json({
+        message: "Password reset link sent successfully"
+    });
+}
+
+export async function resetPassword(req, res) {
+    const { token, email, password } = req.body;
+
+    if (!token || !email || !password) {
+        return res.status(400).json({
+            message: "Token, email and password are required"
+        });
+    }
+
+    const user = await userModel.findOne({ email });
+
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        });
+    }
+
+    const resetTokenHash = crypto
+        .createHash("sha256")
+        .update(token)
+        .digest("hex");
+
+    if (
+        !user.resetPasswordToken ||
+        user.resetPasswordToken !== resetTokenHash
+    ) {
+        return res.status(400).json({
+            message: "Invalid reset token"
+        });
+    }
+
+    if (
+        !user.resetPasswordTokenExpiresAt ||
+        user.resetPasswordTokenExpiresAt.getTime() < Date.now()
+    ) {
+        return res.status(400).json({
+            message: "Reset token has expired"
+        });
+    }
+
+    const hashedPassword = crypto
+        .createHash("sha256")
+        .update(password)
+        .digest("hex");
+
+    user.password = hashedPassword;
+    user.resetPasswordToken = null;
+    user.resetPasswordTokenExpiresAt = null;
+
+    await user.save();
+
+    await sessionModel.updateMany(
+        { userId: user._id, revoked: false },
+        { revoked: true }
+    );
+
+    res.status(200).json({
+        message: "Password reset successfully"
+    });
+}
