@@ -769,3 +769,51 @@ export async function getSessions(req, res) {
         sessions
     });
 }
+
+export async function revokeSession(req, res) {
+    const token = req.headers.authorization?.split(" ")[1];
+
+    if (!token) {
+        return res.status(401).json({
+            message: "No token provided"
+        });
+    }
+
+    const decoded = jwt.verify(token, config.JWT_SECRET);
+
+    const user = await userModel.findById(decoded.id);
+
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        });
+    }
+
+    const { sessionId } = req.params;
+
+    if (!sessionId) {
+        return res.status(400).json({
+            message: "Session ID is required"
+        });
+    }
+
+    const session = await sessionModel.findOne({
+        _id: sessionId,
+        userId: user._id,
+        revoked: false
+    });
+
+    if (!session) {
+        return res.status(404).json({
+            message: "Session not found"
+        });
+    }
+
+    session.revoked = true;
+
+    await session.save();
+
+    res.status(200).json({
+        message: "Session revoked successfully"
+    });
+}

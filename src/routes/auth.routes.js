@@ -93,4 +93,9 @@ authRouter.post("/verifyEmailChange", authController.verifyEmailChange);
 authRouter.get("/getSessions", authController.getSessions);
 
 
+/** * DELETE /api/auth/sessions/:sessionId
+ */
+authRouter.delete("/sessions/:sessionId", authController.revokeSession);
+
+
 export default authRouter;
