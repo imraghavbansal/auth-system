@@ -739,3 +739,33 @@ export async function verifyEmailChange(req, res) {
         }
     });
 }
+
+export async function getSessions(req, res) {
+    const token = req.headers.authorization?.split(" ")[1];
+
+    if (!token) {
+        return res.status(401).json({
+            message: "No token provided"
+        });
+    }
+
+    const decoded = jwt.verify(token, config.JWT_SECRET);
+
+    const user = await userModel.findById(decoded.id);
+
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        });
+    }
+
+    const sessions = await sessionModel.find({
+        userId: user._id,
+        revoked: false
+    }).select("_id ip userAgent createdAt updatedAt");
+
+    res.status(200).json({
+        message: "Sessions fetched successfully",
+        sessions
+    });
+}

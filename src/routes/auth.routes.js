@@ -88,4 +88,9 @@ authRouter.post("/change-email", authController.changeEmail);
 authRouter.post("/verifyEmailChange", authController.verifyEmailChange);
 
 
+/** * GET /api/auth/getSessions
+ */
+authRouter.get("/getSessions", authController.getSessions);
+
+
 export default authRouter;
