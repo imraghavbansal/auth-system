@@ -10,36 +10,65 @@ import otpModel from "../models/otp.model.js";
 
 export async function register(req, res) {
     const { username, email, password } = req.body;
-     const isUserExist = await userModel.findOne({ 
+
+    const isUserExist = await userModel.findOne({
         $or: [
             { username },
             { email }
         ]
-      });
+    });
 
     if (isUserExist) {
-        return res.status(409).json({ message: "Username or Email already exists" });
+        return res.status(409).json({
+            message: "Username or Email already exists"
+        });
     }
 
-    const hashedPassword = crypto.createHash("sha256").update(password).digest("hex");
+    const hashedPassword = crypto
+        .createHash("sha256")
+        .update(password)
+        .digest("hex");
 
-    const user = await userModel.create({ username, email, password: hashedPassword });
+    const user = await userModel.create({
+        username,
+        email,
+        password: hashedPassword
+    });
 
     const otp = generateOtp();
-    const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
-    const otpData = await otpModel.create({ email, user: user._id, otpHash });
-    const otpHtml = getOtpHtml(otp);
-    await sendEmail(email, "OTP Verification", "", otpHtml);
-     
 
-    res.status(201).json({ message: "User registered successfully", 
-        user:{
+    const otpHash = crypto
+        .createHash("sha256")
+        .update(otp)
+        .digest("hex");
+
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await otpModel.create({
+        email,
+        user: user._id,
+        otpHash,
+        purpose: "EMAIL_VERIFICATION",
+        expiresAt
+    });
+
+    const otpHtml = getOtpHtml(otp);
+
+    await sendEmail(
+        email,
+        "OTP Verification",
+        "",
+        otpHtml
+    );
+
+    res.status(201).json({
+        message: "User registered successfully",
+        user: {
             username: user.username,
             email: user.email,
             verified: user.verified
         }
     });
-    
 }
 
 export async function login(req, res) {
@@ -165,20 +194,65 @@ export async function logoutAllSessions(req, res) {
 }
 
 export async function verifyEmail(req, res) {
-    const {otp, email} = req.body;
-    const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
-    const otpDoc = await otpModel.findOne({ email, otpHash });
-    if(!otpDoc) {
-        return res.status(400).json({ message: "Invalid OTP" });
-    }
-    const user = await userModel.findByIdAndUpdate(otpDoc.user, { verified: true }, { new: true });
+    const { otp, email } = req.body;
 
-    await otpModel.deleteMany({ user: user._id });
-    res.status(200).json({ message: "Email verified successfully", user: {
-        username: user.username,
-        email: user.email,
-        verified: user.verified
-    }});
+    if (!otp || !email) {
+        return res.status(400).json({
+            message: "OTP and email are required"
+        });
+    }
+
+    const otpHash = crypto
+        .createHash("sha256")
+        .update(otp)
+        .digest("hex");
+
+    const otpDoc = await otpModel.findOne({
+        user: req.user._id,
+        email,
+        otpHash,
+        purpose: "EMAIL_VERIFICATION"
+    });
+
+    if (!otpDoc) {
+        return res.status(400).json({
+            message: "Invalid OTP"
+        });
+    }
+
+    if (otpDoc.expiresAt < new Date()) {
+        await otpModel.findByIdAndDelete(otpDoc._id);
+
+        return res.status(400).json({
+            message: "OTP has expired"
+        });
+    }
+
+    const user = await userModel.findByIdAndUpdate(
+        req.user._id,
+        { verified: true },
+        { new: true }
+    );
+
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        });
+    }
+
+    await otpModel.deleteMany({
+        user: user._id,
+        purpose: "EMAIL_VERIFICATION"
+    });
+
+    res.status(200).json({
+        message: "Email verified successfully",
+        user: {
+            username: user.username,
+            email: user.email,
+            verified: user.verified
+        }
+    });
 }
 
 export async function forgotPassword(req, res) {
@@ -359,7 +433,8 @@ export async function resendOtp(req, res) {
 
     await otpModel.deleteMany({
         email,
-        user: user._id
+        user: user._id,
+        purpose: "EMAIL_VERIFICATION"
     });
 
     const otp = generateOtp();
@@ -369,30 +444,35 @@ export async function resendOtp(req, res) {
         .update(otp)
         .digest("hex");
 
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
     await otpModel.create({
         email,
         user: user._id,
-        otpHash
+        otpHash,
+        purpose: "EMAIL_VERIFICATION",
+        expiresAt
     });
 
     const otpUrl = `http://localhost:3000/api/auth/verify-otp?email=${email}&otp=${otp}`;
 
     await sendEmail(
-    email,
-    "OTP Verification",
-    `Your OTP is: ${otp}. Use this OTP to verify your email.`,
-    `
-        <p>Your email verification OTP is:</p>
-        <h2>${otp}</h2>
-        <p>Enter this OTP in the verification request to verify your email.</p>
-        <p>Or use this verification link:</p>
-        <a href="${otpUrl}">${otpUrl}</a>
-    `
-);
+        email,
+        "OTP Verification",
+        `Your OTP is: ${otp}. Use this OTP to verify your email.`,
+        `
+            <p>Your email verification OTP is:</p>
+            <h2>${otp}</h2>
+            <p>This OTP expires in 10 minutes.</p>
+            <p>Enter this OTP in the verification request to verify your email.</p>
+            <p>Or use this verification link:</p>
+            <a href="${otpUrl}">${otpUrl}</a>
+        `
+    );
 
-res.status(200).json({
-    message: "OTP sent successfully"
-});
+    res.status(200).json({
+        message: "OTP sent successfully"
+    });
 }
 
 export async function deleteAccount(req, res) {
@@ -487,6 +567,171 @@ export async function updateProfile(req, res) {
 
     res.status(200).json({
         message: "User profile updated successfully",
+        user: {
+            username: user.username,
+            email: user.email,
+            verified: user.verified
+        }
+    });
+}
+
+export async function changeEmail(req, res) {
+    const token = req.headers.authorization?.split(" ")[1];
+
+    if (!token) {
+        return res.status(401).json({
+            message: "No token provided"
+        });
+    }
+
+    const decoded = jwt.verify(token, config.JWT_SECRET);
+
+    const user = await userModel.findById(decoded.id);
+
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        });
+    }
+
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({
+            message: "New email is required"
+        });
+    }
+
+    if (email === user.email) {
+        return res.status(400).json({
+            message: "New email must be different from current email"
+        });
+    }
+
+    const existingUser = await userModel.findOne({ email });
+
+    if (existingUser) {
+        return res.status(409).json({
+            message: "Email is already in use"
+        });
+    }
+
+    await otpModel.deleteMany({
+        user: user._id,
+        purpose: "EMAIL_CHANGE"
+    });
+
+    const otp = generateOtp();
+
+    const otpHash = crypto
+        .createHash("sha256")
+        .update(otp)
+        .digest("hex");
+
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await otpModel.create({
+        email,
+        user: user._id,
+        otpHash,
+        purpose: "EMAIL_CHANGE",
+        expiresAt
+    });
+
+    await sendEmail(
+        email,
+        "Email Change Verification",
+        `Your OTP is: ${otp}. Use this OTP to verify your new email address.`,
+        `
+            <p>Your email change verification OTP is:</p>
+            <h2>${otp}</h2>
+            <p>This OTP expires in 10 minutes.</p>
+            <p>Enter this OTP to verify your new email address.</p>
+        `
+    );
+
+    res.status(200).json({
+        message: "OTP sent to new email address"
+    });
+}
+
+export async function verifyEmailChange(req, res) {
+    const token = req.headers.authorization?.split(" ")[1];
+
+    if (!token) {
+        return res.status(401).json({
+            message: "No token provided"
+        });
+    }
+
+    const decoded = jwt.verify(token, config.JWT_SECRET);
+
+    const user = await userModel.findById(decoded.id);
+
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        });
+    }
+
+    const { otp, email } = req.body;
+
+    if (!otp || !email) {
+        return res.status(400).json({
+            message: "OTP and new email are required"
+        });
+    }
+
+    const otpHash = crypto
+        .createHash("sha256")
+        .update(otp)
+        .digest("hex");
+
+    const otpDoc = await otpModel.findOne({
+        user: user._id,
+        email,
+        otpHash,
+        purpose: "EMAIL_CHANGE"
+    });
+
+    if (!otpDoc) {
+        return res.status(400).json({
+            message: "Invalid OTP"
+        });
+    }
+
+    if (otpDoc.expiresAt < new Date()) {
+        await otpModel.findByIdAndDelete(otpDoc._id);
+
+        return res.status(400).json({
+            message: "OTP has expired"
+        });
+    }
+
+    const existingUser = await userModel.findOne({
+        email,
+        _id: { $ne: user._id }
+    });
+
+    if (existingUser) {
+        return res.status(409).json({
+            message: "Email is already in use"
+        });
+    }
+
+    user.email = email;
+    user.verified = true;
+
+    await user.save();
+
+    await sessionModel.deleteMany({
+        userId: user._id
+    });
+
+    await otpModel.findByIdAndDelete(otpDoc._id);
+
+    res.status(200).json({
+        message: "Email changed successfully",
         user: {
             username: user.username,
             email: user.email,

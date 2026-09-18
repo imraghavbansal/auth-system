@@ -13,6 +13,16 @@ const otpSchema = new mongoose.Schema({
     otpHash: {
         type: String,
         required: [true, "OTP hash is required"]
+    },
+    purpose: {
+    type: String,
+    required: true,
+    enum: ["EMAIL_VERIFICATION", "EMAIL_CHANGE"]
+    },
+
+    expiresAt: {
+    type: Date,
+    required: true
     }
 }, { timestamps: true }); 
 

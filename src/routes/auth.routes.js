@@ -78,4 +78,14 @@ authRouter.get("/profile", authController.getProfile);
 authRouter.patch("/profile", authController.updateProfile);
 
 
+/** * POST /api/auth/change-email
+ */
+authRouter.post("/change-email", authController.changeEmail);
+
+
+/** * POST /api/auth/verify-email-change
+ */
+authRouter.post("/verifyEmailChange", authController.verifyEmailChange);
+
+
 export default authRouter;
