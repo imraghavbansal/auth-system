@@ -63,4 +63,9 @@ authRouter.post("/change-password", authController.changePassword);
 authRouter.post("/resend-otp", authController.resendOtp);
 
 
+/** * DELETE /api/auth/delete-account
+ */
+authRouter.delete("/delete-account", authController.deleteAccount);
+
+
 export default authRouter;

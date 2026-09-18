@@ -394,3 +394,37 @@ res.status(200).json({
     message: "OTP sent successfully"
 });
 }
+
+export async function deleteAccount(req, res) {
+    const token = req.headers.authorization?.split(" ")[1];
+
+    if (!token) {
+        return res.status(401).json({
+            message: "No token provided"
+        });
+    }
+
+    const decoded = jwt.verify(token, config.JWT_SECRET);
+
+    const user = await userModel.findById(decoded.id);
+
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        });
+    }
+
+    await sessionModel.deleteMany({
+        userId: user._id
+    });
+
+    await otpModel.deleteMany({
+        user: user._id
+    });
+
+    await userModel.findByIdAndDelete(user._id);
+
+    res.status(200).json({
+        message: "Account deleted successfully"
+    });
+}
