@@ -68,4 +68,14 @@ authRouter.post("/resend-otp", authController.resendOtp);
 authRouter.delete("/delete-account", authController.deleteAccount);
 
 
+/** * GET /api/auth/profile
+ */
+authRouter.get("/profile", authController.getProfile);
+
+
+/** * PATCH /api/auth/profile
+ */
+authRouter.patch("/profile", authController.updateProfile);
+
+
 export default authRouter;
