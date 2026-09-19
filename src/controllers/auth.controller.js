@@ -7,6 +7,7 @@ import { sendEmail } from "../services/email.service.js";
 import {generateOtp, getOtpHtml} from "../utils/utils.js";
 import otpModel from "../models/otp.model.js";
 import argon2 from "argon2";
+import loginAttemptModel from "../models/login-attempt.model.js";
 
 
 export async function register(req, res) {
@@ -74,9 +75,74 @@ export async function register(req, res) {
 export async function login(req, res) {
     const { email, password } = req.body;
 
-    const user = await userModel.findOne({ email });
+    if (!email || !password) {
+        return res.status(400).json({
+            message: "Email and password are required"
+        });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const ip = req.ip;
+
+    let loginAttempt = await loginAttemptModel.findOne({
+        email: normalizedEmail,
+        ip
+    });
+
+    const now = Date.now();
+    const windowDuration = 15 * 60 * 1000;
+    const maxAttempts = 5;
+
+    // Start a new rate-limit window if the previous one expired
+    if (
+        loginAttempt &&
+        now - loginAttempt.windowStartedAt.getTime() >= windowDuration
+    ) {
+        loginAttempt.attempts = 0;
+        loginAttempt.windowStartedAt = new Date();
+        loginAttempt.blockedUntil = null;
+
+        await loginAttempt.save();
+    }
+
+    // Check whether login is currently blocked
+    if (
+        loginAttempt?.blockedUntil &&
+        loginAttempt.blockedUntil.getTime() > now
+    ) {
+        const remainingSeconds = Math.ceil(
+            (loginAttempt.blockedUntil.getTime() - now) / 1000
+        );
+
+        return res.status(429).json({
+            message: `Too many failed login attempts. Please try again in ${remainingSeconds} seconds`
+        });
+    }
+
+    const user = await userModel.findOne({
+        email: normalizedEmail
+    });
 
     if (!user) {
+        if (!loginAttempt) {
+            loginAttempt = await loginAttemptModel.create({
+                email: normalizedEmail,
+                ip,
+                attempts: 1,
+                windowStartedAt: new Date()
+            });
+        } else {
+            loginAttempt.attempts += 1;
+
+            if (loginAttempt.attempts >= maxAttempts) {
+                loginAttempt.blockedUntil = new Date(
+                    now + windowDuration
+                );
+            }
+
+            await loginAttempt.save();
+        }
+
         return res.status(401).json({
             message: "Invalid email or password"
         });
@@ -94,8 +160,34 @@ export async function login(req, res) {
     );
 
     if (!isPasswordValid) {
+        if (!loginAttempt) {
+            loginAttempt = await loginAttemptModel.create({
+                email: normalizedEmail,
+                ip,
+                attempts: 1,
+                windowStartedAt: new Date()
+            });
+        } else {
+            loginAttempt.attempts += 1;
+
+            if (loginAttempt.attempts >= maxAttempts) {
+                loginAttempt.blockedUntil = new Date(
+                    now + windowDuration
+                );
+            }
+
+            await loginAttempt.save();
+        }
+
         return res.status(401).json({
             message: "Invalid email or password"
+        });
+    }
+
+    // Successful login clears the failed-attempt record
+    if (loginAttempt) {
+        await loginAttemptModel.deleteOne({
+            _id: loginAttempt._id
         });
     }
 
