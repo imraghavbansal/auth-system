@@ -458,6 +458,28 @@ export async function resendOtp(req, res) {
         });
     }
 
+    // Check whether the user recently requested an OTP
+    const existingOtp = await otpModel.findOne({
+        email,
+        user: user._id,
+        purpose: "EMAIL_VERIFICATION"
+    });
+
+    if (existingOtp) {
+        const cooldown = 60 * 1000;
+        const timeSinceCreated = Date.now() - existingOtp.createdAt.getTime();
+
+        if (timeSinceCreated < cooldown) {
+            const remainingSeconds = Math.ceil(
+                (cooldown - timeSinceCreated) / 1000
+            );
+
+            return res.status(429).json({
+                message: `Please wait ${remainingSeconds} seconds before requesting another OTP`
+            });
+        }
+    }
+
     await otpModel.deleteMany({
         email,
         user: user._id,
