@@ -6,6 +6,7 @@ import sessionModel from "../models/session.model.js";
 import { sendEmail } from "../services/email.service.js";
 import {generateOtp, getOtpHtml} from "../utils/utils.js";
 import otpModel from "../models/otp.model.js";
+import argon2 from "argon2";
 
 
 export async function register(req, res) {
@@ -24,10 +25,9 @@ export async function register(req, res) {
         });
     }
 
-    const hashedPassword = crypto
-        .createHash("sha256")
-        .update(password)
-        .digest("hex");
+    const hashedPassword = await argon2.hash(password, {
+        type: argon2.argon2id
+    });
 
     const user = await userModel.create({
         username,
@@ -72,42 +72,72 @@ export async function register(req, res) {
 }
 
 export async function login(req, res) {
-    const {email, password} = req.body;
+    const { email, password } = req.body;
+
     const user = await userModel.findOne({ email });
-    if(!user) {
-        return res.status(401).json({ message: "Invalid email or password" });
+
+    if (!user) {
+        return res.status(401).json({
+            message: "Invalid email or password"
+        });
     }
 
-    if(!user.verified) {
-        return res.status(403).json({ message: "Email not verified. Please verify your email before logging in." });
+    if (!user.verified) {
+        return res.status(403).json({
+            message: "Email not verified. Please verify your email before logging in."
+        });
     }
 
-    const hashedPassword = crypto.createHash("sha256").update(password).digest("hex");
-    if(hashedPassword !== user.password) {
-        return res.status(401).json({ message: "Invalid email or password" });
+    const isPasswordValid = await argon2.verify(
+        user.password,
+        password
+    );
+
+    if (!isPasswordValid) {
+        return res.status(401).json({
+            message: "Invalid email or password"
+        });
     }
-    const refreshToken = jwt.sign({ id: user._id }, config.JWT_SECRET, { expiresIn: "7d" });
-    const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+
+    const refreshToken = jwt.sign(
+        { id: user._id },
+        config.JWT_SECRET,
+        { expiresIn: "7d" }
+    );
+
+    const refreshTokenHash = crypto
+        .createHash("sha256")
+        .update(refreshToken)
+        .digest("hex");
+
     const session = await sessionModel.create({
         userId: user._id,
         refreshTokenHash,
         ip: req.ip,
-        userAgent: req.headers['user-agent']
-    })
-    const accessToken = jwt.sign({ id: user._id }, config.JWT_SECRET, { expiresIn: "15m" });
+        userAgent: req.headers["user-agent"]
+    });
+
+    const accessToken = jwt.sign(
+        { id: user._id },
+        config.JWT_SECRET,
+        { expiresIn: "15m" }
+    );
+
     res.cookie("refreshToken", refreshToken, {
         httpOnly: true,
         secure: true,
         sameSite: "strict",
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-    })
-    res.status(200).json({ message: "User logged in successfully", 
-        user:{
+        maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+    res.status(200).json({
+        message: "User logged in successfully",
+        user: {
             username: user.username,
-            email: user.email,
+            email: user.email
         },
         accessToken
-    })
+    });
 }
 
 export async function getMe(req, res) {
@@ -208,7 +238,6 @@ export async function verifyEmail(req, res) {
         .digest("hex");
 
     const otpDoc = await otpModel.findOne({
-        user: req.user._id,
         email,
         otpHash,
         purpose: "EMAIL_VERIFICATION"
@@ -229,7 +258,7 @@ export async function verifyEmail(req, res) {
     }
 
     const user = await userModel.findByIdAndUpdate(
-        req.user._id,
+        otpDoc.user,
         { verified: true },
         { new: true }
     );
@@ -330,10 +359,9 @@ export async function resetPassword(req, res) {
         });
     }
 
-    const hashedPassword = crypto
-        .createHash("sha256")
-        .update(password)
-        .digest("hex");
+    const hashedPassword = await argon2.hash(password, {
+    type: argon2.argon2id
+     });
 
     user.password = hashedPassword;
     user.resetPasswordToken = null;
@@ -378,21 +406,20 @@ export async function changePassword(req, res) {
         });
     }
 
-    const currentPasswordHash = crypto
-        .createHash("sha256")
-        .update(currentPassword)
-        .digest("hex");
+    const isCurrentPasswordValid = await argon2.verify(
+    user.password,
+    currentPassword
+);
 
-    if (currentPasswordHash !== user.password) {
-        return res.status(401).json({
-            message: "Current password is incorrect"
-        });
-    }
-
-    const newPasswordHash = crypto
-        .createHash("sha256")
-        .update(newPassword)
-        .digest("hex");
+if (!isCurrentPasswordValid) {
+    return res.status(401).json({
+        message: "Current password is incorrect"
+    });
+}
+    
+    const newPasswordHash = await argon2.hash(newPassword, {
+        type: argon2.argon2id
+    });
 
     user.password = newPasswordHash;
 
