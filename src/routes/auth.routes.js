@@ -15,7 +15,7 @@ import {
 } from "../validations/auth.validation.js";
 import { validate } from "../middleware/validate.middleware.js";
 import { asyncHandler } from "../middleware/async-handler.middleware.js";
-
+import { authenticateUser } from "../middleware/auth.middleware.js";
 
 
 const authRouter = Router();
@@ -43,6 +43,7 @@ authRouter.post(
  */
 authRouter.get(
     "/get-me",
+    asyncHandler(authenticateUser),
     asyncHandler(authController.getMe)
 );
 
@@ -103,6 +104,7 @@ authRouter.post(
 authRouter.post(
     "/change-password",
     validate(changePasswordSchema),
+    asyncHandler(authenticateUser),
     asyncHandler(authController.changePassword)
 );
 
@@ -120,6 +122,7 @@ authRouter.post(
  */
 authRouter.delete(
     "/delete-account",
+    asyncHandler(authenticateUser),
     asyncHandler(authController.deleteAccount)
 );
 
@@ -128,6 +131,7 @@ authRouter.delete(
  */
 authRouter.get(
     "/profile",
+    asyncHandler(authenticateUser),
     asyncHandler(authController.getProfile)
 );
 
@@ -137,6 +141,7 @@ authRouter.get(
 authRouter.patch(
     "/profile",
     validate(updateProfileSchema),
+    asyncHandler(authenticateUser),
     asyncHandler(authController.updateProfile)
 );
 
@@ -146,6 +151,7 @@ authRouter.patch(
 authRouter.post(
     "/change-email",
     validate(changeEmailSchema),
+    asyncHandler(authenticateUser),
     asyncHandler(authController.changeEmail)
 );
 
@@ -155,6 +161,7 @@ authRouter.post(
 authRouter.post(
     "/verifyEmailChange",
     validate(verifyEmailChangeSchema),
+    asyncHandler(authenticateUser),
     asyncHandler(authController.verifyEmailChange)
 );
 
@@ -163,6 +170,7 @@ authRouter.post(
  */
 authRouter.get(
     "/getSessions",
+    asyncHandler(authenticateUser),
     asyncHandler(authController.getSessions)
 );
 
@@ -172,6 +180,7 @@ authRouter.get(
 authRouter.delete(
     "/sessions/:sessionId",
     validate(revokeSessionSchema),
+    asyncHandler(authenticateUser),
     asyncHandler(authController.revokeSession)
 );
 

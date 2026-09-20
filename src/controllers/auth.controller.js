@@ -227,20 +227,13 @@ export async function login(req, res) {
 }
 
 export async function getMe(req, res) {
-    const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
-        return res.status(401).json({ message: "No token provided" });
-    }
-
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-    const user = await userModel.findById(decoded.id);
+    const user = req.user;
 
     res.status(200).json({
         message: "User fetched successfully",
         user: {
             username: user.username,
-            email: user.email,
+            email: user.email
         }
     });
 }
@@ -249,7 +242,9 @@ export async function refreshToken(req, res) {
     const refreshToken = req.cookies.refreshToken;
 
     if (!refreshToken) {
-        return res.status(401).json({ message: "No refresh token provided" });
+        return res.status(401).json({
+            message: "No refresh token provided"
+        });
     }
 
     const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
@@ -265,7 +260,9 @@ export async function refreshToken(req, res) {
     });
 
     if (!session) {
-        return res.status(401).json({ message: "Invalid refresh token" });
+        return res.status(401).json({
+            message: "Invalid refresh token"
+        });
     }
 
     const user = await userModel.findById(decoded.id);
@@ -308,7 +305,9 @@ export async function logout(req, res) {
     const refreshToken = req.cookies.refreshToken;
 
     if (!refreshToken) {
-        return res.status(401).json({ message: "No refresh token provided" });
+        return res.status(401).json({
+            message: "No refresh token provided"
+        });
     }
 
     const refreshTokenHash = crypto
@@ -322,7 +321,9 @@ export async function logout(req, res) {
     });
 
     if (!session) {
-        return res.status(401).json({ message: "Invalid refresh token" });
+        return res.status(401).json({
+            message: "Invalid refresh token"
+        });
     }
 
     session.revoked = true;
@@ -340,14 +341,21 @@ export async function logoutAllSessions(req, res) {
     const refreshToken = req.cookies.refreshToken;
 
     if (!refreshToken) {
-        return res.status(401).json({ message: "No refresh token provided" });
+        return res.status(401).json({
+            message: "No refresh token provided"
+        });
     }
 
     const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
 
     await sessionModel.updateMany(
-        { userId: decoded.id, revoked: false },
-        { revoked: true }
+        {
+            userId: decoded.id,
+            revoked: false
+        },
+        {
+            revoked: true
+        }
     );
 
     res.clearCookie("refreshToken");
@@ -418,7 +426,9 @@ export async function forgotPassword(req, res) {
     const user = await userModel.findOne({ email });
 
     if (!user) {
-        return res.status(404).json({ message: "User not found" });
+        return res.status(404).json({
+            message: "User not found"
+        });
     }
 
     const resetToken = crypto.randomBytes(32).toString("hex");
@@ -494,8 +504,13 @@ export async function resetPassword(req, res) {
     await user.save();
 
     await sessionModel.updateMany(
-        { userId: user._id, revoked: false },
-        { revoked: true }
+        {
+            userId: user._id,
+            revoked: false
+        },
+        {
+            revoked: true
+        }
     );
 
     res.status(200).json({
@@ -505,24 +520,7 @@ export async function resetPassword(req, res) {
 
 export async function changePassword(req, res) {
     const { currentPassword, newPassword } = req.body;
-
-    const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
-        return res.status(401).json({
-            message: "No token provided"
-        });
-    }
-
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-
-    const user = await userModel.findById(decoded.id);
-
-    if (!user) {
-        return res.status(404).json({
-            message: "User not found"
-        });
-    }
+    const user = req.user;
 
     const isCurrentPasswordValid = await argon2.verify(
         user.password,
@@ -544,8 +542,13 @@ export async function changePassword(req, res) {
     await user.save();
 
     await sessionModel.updateMany(
-        { userId: user._id, revoked: false },
-        { revoked: true }
+        {
+            userId: user._id,
+            revoked: false
+        },
+        {
+            revoked: true
+        }
     );
 
     res.status(200).json({
@@ -637,23 +640,7 @@ export async function resendOtp(req, res) {
 }
 
 export async function deleteAccount(req, res) {
-    const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
-        return res.status(401).json({
-            message: "No token provided"
-        });
-    }
-
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-
-    const user = await userModel.findById(decoded.id);
-
-    if (!user) {
-        return res.status(404).json({
-            message: "User not found"
-        });
-    }
+    const user = req.user;
 
     await sessionModel.deleteMany({
         userId: user._id
@@ -671,23 +658,7 @@ export async function deleteAccount(req, res) {
 }
 
 export async function getProfile(req, res) {
-    const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
-        return res.status(401).json({
-            message: "No token provided"
-        });
-    }
-
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-
-    const user = await userModel.findById(decoded.id);
-
-    if (!user) {
-        return res.status(404).json({
-            message: "User not found"
-        });
-    }
+    const user = req.user;
 
     res.status(200).json({
         message: "User profile fetched successfully",
@@ -700,24 +671,7 @@ export async function getProfile(req, res) {
 }
 
 export async function updateProfile(req, res) {
-    const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
-        return res.status(401).json({
-            message: "No token provided"
-        });
-    }
-
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-
-    const user = await userModel.findById(decoded.id);
-
-    if (!user) {
-        return res.status(404).json({
-            message: "User not found"
-        });
-    }
-
+    const user = req.user;
     const { username } = req.body;
 
     user.username = username;
@@ -735,24 +689,7 @@ export async function updateProfile(req, res) {
 }
 
 export async function changeEmail(req, res) {
-    const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
-        return res.status(401).json({
-            message: "No token provided"
-        });
-    }
-
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-
-    const user = await userModel.findById(decoded.id);
-
-    if (!user) {
-        return res.status(404).json({
-            message: "User not found"
-        });
-    }
-
+    const user = req.user;
     const { email } = req.body;
 
     if (email === user.email) {
@@ -809,24 +746,7 @@ export async function changeEmail(req, res) {
 }
 
 export async function verifyEmailChange(req, res) {
-    const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
-        return res.status(401).json({
-            message: "No token provided"
-        });
-    }
-
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-
-    const user = await userModel.findById(decoded.id);
-
-    if (!user) {
-        return res.status(404).json({
-            message: "User not found"
-        });
-    }
-
+    const user = req.user;
     const { otp, email } = req.body;
 
     const otpHash = crypto
@@ -888,23 +808,7 @@ export async function verifyEmailChange(req, res) {
 }
 
 export async function getSessions(req, res) {
-    const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
-        return res.status(401).json({
-            message: "No token provided"
-        });
-    }
-
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-
-    const user = await userModel.findById(decoded.id);
-
-    if (!user) {
-        return res.status(404).json({
-            message: "User not found"
-        });
-    }
+    const user = req.user;
 
     const sessions = await sessionModel.find({
         userId: user._id,
@@ -918,24 +822,7 @@ export async function getSessions(req, res) {
 }
 
 export async function revokeSession(req, res) {
-    const token = req.headers.authorization?.split(" ")[1];
-
-    if (!token) {
-        return res.status(401).json({
-            message: "No token provided"
-        });
-    }
-
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-
-    const user = await userModel.findById(decoded.id);
-
-    if (!user) {
-        return res.status(404).json({
-            message: "User not found"
-        });
-    }
-
+    const user = req.user;
     const { sessionId } = req.params;
 
     const session = await sessionModel.findOne({
