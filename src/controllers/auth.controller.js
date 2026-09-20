@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import config from "../config/config.js";
 import sessionModel from "../models/session.model.js";
 import { sendEmail } from "../services/email.service.js";
-import {generateOtp, getOtpHtml} from "../utils/utils.js";
+import { generateOtp, getOtpHtml } from "../utils/utils.js";
 import otpModel from "../models/otp.model.js";
 import argon2 from "argon2";
 import loginAttemptModel from "../models/login-attempt.model.js";
@@ -74,12 +74,6 @@ export async function register(req, res) {
 
 export async function login(req, res) {
     const { email, password } = req.body;
-
-    if (!email || !password) {
-        return res.status(400).json({
-            message: "Email and password are required"
-        });
-    }
 
     const normalizedEmail = email.trim().toLowerCase();
     const ip = req.ip;
@@ -234,95 +228,137 @@ export async function login(req, res) {
 
 export async function getMe(req, res) {
     const token = req.headers.authorization?.split(" ")[1];
-    if(!token) {
+
+    if (!token) {
         return res.status(401).json({ message: "No token provided" });
     }
-    const decoded = jwt.verify(token, config.JWT_SECRET)
+
+    const decoded = jwt.verify(token, config.JWT_SECRET);
     const user = await userModel.findById(decoded.id);
+
     res.status(200).json({
         message: "User fetched successfully",
         user: {
             username: user.username,
             email: user.email,
         }
-    })
+    });
 }
 
 export async function refreshToken(req, res) {
     const refreshToken = req.cookies.refreshToken;
-    if(!refreshToken) {
+
+    if (!refreshToken) {
         return res.status(401).json({ message: "No refresh token provided" });
     }
+
     const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
 
-    const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
-    const session = await sessionModel.findOne({ 
+    const refreshTokenHash = crypto
+        .createHash("sha256")
+        .update(refreshToken)
+        .digest("hex");
+
+    const session = await sessionModel.findOne({
         refreshTokenHash,
         revoked: false
-    })
-    if(!session) {
+    });
+
+    if (!session) {
         return res.status(401).json({ message: "Invalid refresh token" });
     }
 
-
     const user = await userModel.findById(decoded.id);
-    const accessToken = jwt.sign({ id: user._id }, config.JWT_SECRET, { expiresIn: "15m" });
 
-    const newRefreshToken = jwt.sign({ id: user._id }, config.JWT_SECRET, { expiresIn: "7d" });
+    const accessToken = jwt.sign(
+        { id: user._id },
+        config.JWT_SECRET,
+        { expiresIn: "15m" }
+    );
 
-    const newRefreshTokenHash = crypto.createHash("sha256").update(newRefreshToken).digest("hex");
+    const newRefreshToken = jwt.sign(
+        { id: user._id },
+        config.JWT_SECRET,
+        { expiresIn: "7d" }
+    );
+
+    const newRefreshTokenHash = crypto
+        .createHash("sha256")
+        .update(newRefreshToken)
+        .digest("hex");
+
     session.refreshTokenHash = newRefreshTokenHash;
-    await session.save();
 
+    await session.save();
 
     res.cookie("refreshToken", newRefreshToken, {
         httpOnly: true,
         secure: true,
         sameSite: "strict",
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-    })
+        maxAge: 7 * 24 * 60 * 60 * 1000
+    });
 
-    res.status(200).json({ message: "Access token refreshed successfully", accessToken });
+    res.status(200).json({
+        message: "Access token refreshed successfully",
+        accessToken
+    });
 }
 
 export async function logout(req, res) {
     const refreshToken = req.cookies.refreshToken;
-    if(!refreshToken) {
+
+    if (!refreshToken) {
         return res.status(401).json({ message: "No refresh token provided" });
     }
-    const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
-    const session = await sessionModel.findOne({ 
+
+    const refreshTokenHash = crypto
+        .createHash("sha256")
+        .update(refreshToken)
+        .digest("hex");
+
+    const session = await sessionModel.findOne({
         refreshTokenHash,
         revoked: false
-    })
-     if(!session) {
+    });
+
+    if (!session) {
         return res.status(401).json({ message: "Invalid refresh token" });
-    } 
+    }
+
     session.revoked = true;
+
     await session.save();
+
     res.clearCookie("refreshToken");
-    res.status(200).json({ message: "User logged out successfully" });
+
+    res.status(200).json({
+        message: "User logged out successfully"
+    });
 }
 
 export async function logoutAllSessions(req, res) {
     const refreshToken = req.cookies.refreshToken;
-    if(!refreshToken) {
+
+    if (!refreshToken) {
         return res.status(401).json({ message: "No refresh token provided" });
     }
+
     const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
-    await sessionModel.updateMany({ userId: decoded.id ,revoked:false}, { revoked: true });
+
+    await sessionModel.updateMany(
+        { userId: decoded.id, revoked: false },
+        { revoked: true }
+    );
+
     res.clearCookie("refreshToken");
-    res.status(200).json({ message: "User logged out from all sessions successfully" });
+
+    res.status(200).json({
+        message: "User logged out from all sessions successfully"
+    });
 }
 
 export async function verifyEmail(req, res) {
     const { otp, email } = req.body;
-
-    if (!otp || !email) {
-        return res.status(400).json({
-            message: "OTP and email are required"
-        });
-    }
 
     const otpHash = crypto
         .createHash("sha256")
@@ -393,7 +429,9 @@ export async function forgotPassword(req, res) {
         .digest("hex");
 
     user.resetPasswordToken = resetTokenHash;
-    user.resetPasswordTokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    user.resetPasswordTokenExpiresAt = new Date(
+        Date.now() + 15 * 60 * 1000
+    );
 
     await user.save();
 
@@ -413,12 +451,6 @@ export async function forgotPassword(req, res) {
 
 export async function resetPassword(req, res) {
     const { token, email, password } = req.body;
-
-    if (!token || !email || !password) {
-        return res.status(400).json({
-            message: "Token, email and password are required"
-        });
-    }
 
     const user = await userModel.findOne({ email });
 
@@ -452,8 +484,8 @@ export async function resetPassword(req, res) {
     }
 
     const hashedPassword = await argon2.hash(password, {
-    type: argon2.argon2id
-     });
+        type: argon2.argon2id
+    });
 
     user.password = hashedPassword;
     user.resetPasswordToken = null;
@@ -474,12 +506,6 @@ export async function resetPassword(req, res) {
 export async function changePassword(req, res) {
     const { currentPassword, newPassword } = req.body;
 
-    if (!currentPassword || !newPassword) {
-        return res.status(400).json({
-            message: "Current password and new password are required"
-        });
-    }
-
     const token = req.headers.authorization?.split(" ")[1];
 
     if (!token) {
@@ -499,16 +525,16 @@ export async function changePassword(req, res) {
     }
 
     const isCurrentPasswordValid = await argon2.verify(
-    user.password,
-    currentPassword
-);
+        user.password,
+        currentPassword
+    );
 
-if (!isCurrentPasswordValid) {
-    return res.status(401).json({
-        message: "Current password is incorrect"
-    });
-}
-    
+    if (!isCurrentPasswordValid) {
+        return res.status(401).json({
+            message: "Current password is incorrect"
+        });
+    }
+
     const newPasswordHash = await argon2.hash(newPassword, {
         type: argon2.argon2id
     });
@@ -529,12 +555,6 @@ if (!isCurrentPasswordValid) {
 
 export async function resendOtp(req, res) {
     const { email } = req.body;
-
-    if (!email) {
-        return res.status(400).json({
-            message: "Email is required"
-        });
-    }
 
     const user = await userModel.findOne({ email });
 
@@ -700,9 +720,7 @@ export async function updateProfile(req, res) {
 
     const { username } = req.body;
 
-    if (username !== undefined) {
-        user.username = username;
-    }
+    user.username = username;
 
     await user.save();
 
@@ -736,12 +754,6 @@ export async function changeEmail(req, res) {
     }
 
     const { email } = req.body;
-
-    if (!email) {
-        return res.status(400).json({
-            message: "New email is required"
-        });
-    }
 
     if (email === user.email) {
         return res.status(400).json({
@@ -816,12 +828,6 @@ export async function verifyEmailChange(req, res) {
     }
 
     const { otp, email } = req.body;
-
-    if (!otp || !email) {
-        return res.status(400).json({
-            message: "OTP and new email are required"
-        });
-    }
 
     const otpHash = crypto
         .createHash("sha256")
@@ -931,12 +937,6 @@ export async function revokeSession(req, res) {
     }
 
     const { sessionId } = req.params;
-
-    if (!sessionId) {
-        return res.status(400).json({
-            message: "Session ID is required"
-        });
-    }
 
     const session = await sessionModel.findOne({
         _id: sessionId,
