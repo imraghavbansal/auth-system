@@ -31,6 +31,11 @@ const loginAttemptSchema = new mongoose.Schema({
     timestamps: true
 });
 
+loginAttemptSchema.index({
+    email: 1,
+    ip: 1
+});
+
 const loginAttemptModel = mongoose.model(
     "LoginAttempts",
     loginAttemptSchema

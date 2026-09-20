@@ -5,28 +5,45 @@ const otpSchema = new mongoose.Schema({
         type: String,
         required: [true, "Email is required"]
     },
+
     user: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Users",
         required: [true, "User reference is required"]
     },
+
     otpHash: {
         type: String,
         required: [true, "OTP hash is required"]
     },
+
     purpose: {
-    type: String,
-    required: true,
-    enum: ["EMAIL_VERIFICATION", "EMAIL_CHANGE"]
+        type: String,
+        required: true,
+        enum: ["EMAIL_VERIFICATION", "EMAIL_CHANGE"]
     },
 
     expiresAt: {
-    type: Date,
-    required: true,
-    index: true,
-    expires: 0
+        type: Date,
+        required: true,
+        index: true,
+        expires: 0
     }
-}, { timestamps: true }); 
+}, {
+    timestamps: true
+});
 
-const otpModel = mongoose.model("OTP", otpSchema); 
+otpSchema.index({
+    email: 1,
+    otpHash: 1,
+    purpose: 1
+});
+
+otpSchema.index({
+    user: 1,
+    purpose: 1
+});
+
+const otpModel = mongoose.model("OTP", otpSchema);
+
 export default otpModel;
