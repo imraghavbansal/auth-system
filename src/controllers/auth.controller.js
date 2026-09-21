@@ -45,7 +45,7 @@ export async function register(req, res) {
 
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    await otpModel.create({
+    const otpDoc = await otpModel.create({
         email,
         user: user._id,
         otpHash,
@@ -55,12 +55,19 @@ export async function register(req, res) {
 
     const otpHtml = getOtpHtml(otp);
 
-    await sendEmail(
-        email,
-        "OTP Verification",
-        "",
-        otpHtml
-    );
+    try {
+        await sendEmail(
+            email,
+            "OTP Verification",
+            "",
+            otpHtml
+        );
+    } catch (error) {
+        await otpModel.findByIdAndDelete(otpDoc._id);
+        await userModel.findByIdAndDelete(user._id);
+
+        throw error;
+    }
 
     res.status(201).json({
         message: "User registered successfully",
@@ -71,6 +78,7 @@ export async function register(req, res) {
         }
     });
 }
+
 
 export async function login(req, res) {
     const { email, password } = req.body;
@@ -196,7 +204,7 @@ export async function login(req, res) {
         .update(refreshToken)
         .digest("hex");
 
-    const session = await sessionModel.create({
+    await sessionModel.create({
         userId: user._id,
         refreshTokenHash,
         ip: req.ip,
@@ -226,6 +234,7 @@ export async function login(req, res) {
     });
 }
 
+
 export async function getMe(req, res) {
     const user = req.user;
 
@@ -237,6 +246,7 @@ export async function getMe(req, res) {
         }
     });
 }
+
 
 export async function refreshToken(req, res) {
     const refreshToken = req.cookies.refreshToken;
@@ -301,6 +311,7 @@ export async function refreshToken(req, res) {
     });
 }
 
+
 export async function logout(req, res) {
     const refreshToken = req.cookies.refreshToken;
 
@@ -337,6 +348,7 @@ export async function logout(req, res) {
     });
 }
 
+
 export async function logoutAllSessions(req, res) {
     const refreshToken = req.cookies.refreshToken;
 
@@ -364,6 +376,7 @@ export async function logoutAllSessions(req, res) {
         message: "User logged out from all sessions successfully"
     });
 }
+
 
 export async function verifyEmail(req, res) {
     const { otp, email } = req.body;
@@ -420,6 +433,7 @@ export async function verifyEmail(req, res) {
     });
 }
 
+
 export async function forgotPassword(req, res) {
     const { email } = req.body;
 
@@ -447,17 +461,27 @@ export async function forgotPassword(req, res) {
 
     const resetUrl = `http://localhost:3000/api/auth/reset-password?token=${resetToken}&email=${email}`;
 
-    await sendEmail(
-        email,
-        "Password Reset",
-        `Reset your password using this link: ${resetUrl}`,
-        `<p>Reset your password using this link:</p><a href="${resetUrl}">${resetUrl}</a>`
-    );
+    try {
+        await sendEmail(
+            email,
+            "Password Reset",
+            `Reset your password using this link: ${resetUrl}`,
+            `<p>Reset your password using this link:</p><a href="${resetUrl}">${resetUrl}</a>`
+        );
+    } catch (error) {
+        user.resetPasswordToken = null;
+        user.resetPasswordTokenExpiresAt = null;
+
+        await user.save();
+
+        throw error;
+    }
 
     res.status(200).json({
         message: "Password reset link sent successfully"
     });
 }
+
 
 export async function resetPassword(req, res) {
     const { token, email, password } = req.body;
@@ -518,6 +542,7 @@ export async function resetPassword(req, res) {
     });
 }
 
+
 export async function changePassword(req, res) {
     const { currentPassword, newPassword } = req.body;
     const user = req.user;
@@ -556,6 +581,7 @@ export async function changePassword(req, res) {
     });
 }
 
+
 export async function resendOtp(req, res) {
     const { email } = req.body;
 
@@ -582,7 +608,8 @@ export async function resendOtp(req, res) {
 
     if (existingOtp) {
         const cooldown = 60 * 1000;
-        const timeSinceCreated = Date.now() - existingOtp.createdAt.getTime();
+        const timeSinceCreated =
+            Date.now() - existingOtp.createdAt.getTime();
 
         if (timeSinceCreated < cooldown) {
             const remainingSeconds = Math.ceil(
@@ -610,7 +637,7 @@ export async function resendOtp(req, res) {
 
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    await otpModel.create({
+    const otpDoc = await otpModel.create({
         email,
         user: user._id,
         otpHash,
@@ -620,24 +647,31 @@ export async function resendOtp(req, res) {
 
     const otpUrl = `http://localhost:3000/api/auth/verify-otp?email=${email}&otp=${otp}`;
 
-    await sendEmail(
-        email,
-        "OTP Verification",
-        `Your OTP is: ${otp}. Use this OTP to verify your email.`,
-        `
-            <p>Your email verification OTP is:</p>
-            <h2>${otp}</h2>
-            <p>This OTP expires in 10 minutes.</p>
-            <p>Enter this OTP in the verification request to verify your email.</p>
-            <p>Or use this verification link:</p>
-            <a href="${otpUrl}">${otpUrl}</a>
-        `
-    );
+    try {
+        await sendEmail(
+            email,
+            "OTP Verification",
+            `Your OTP is: ${otp}. Use this OTP to verify your email.`,
+            `
+                <p>Your email verification OTP is:</p>
+                <h2>${otp}</h2>
+                <p>This OTP expires in 10 minutes.</p>
+                <p>Enter this OTP in the verification request to verify your email.</p>
+                <p>Or use this verification link:</p>
+                <a href="${otpUrl}">${otpUrl}</a>
+            `
+        );
+    } catch (error) {
+        await otpModel.findByIdAndDelete(otpDoc._id);
+
+        throw error;
+    }
 
     res.status(200).json({
         message: "OTP sent successfully"
     });
 }
+
 
 export async function deleteAccount(req, res) {
     const user = req.user;
@@ -657,6 +691,7 @@ export async function deleteAccount(req, res) {
     });
 }
 
+
 export async function getProfile(req, res) {
     const user = req.user;
 
@@ -669,6 +704,7 @@ export async function getProfile(req, res) {
         }
     });
 }
+
 
 export async function updateProfile(req, res) {
     const user = req.user;
@@ -687,6 +723,7 @@ export async function updateProfile(req, res) {
         }
     });
 }
+
 
 export async function changeEmail(req, res) {
     const user = req.user;
@@ -720,7 +757,7 @@ export async function changeEmail(req, res) {
 
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    await otpModel.create({
+    const otpDoc = await otpModel.create({
         email,
         user: user._id,
         otpHash,
@@ -728,22 +765,29 @@ export async function changeEmail(req, res) {
         expiresAt
     });
 
-    await sendEmail(
-        email,
-        "Email Change Verification",
-        `Your OTP is: ${otp}. Use this OTP to verify your new email address.`,
-        `
-            <p>Your email change verification OTP is:</p>
-            <h2>${otp}</h2>
-            <p>This OTP expires in 10 minutes.</p>
-            <p>Enter this OTP to verify your new email address.</p>
-        `
-    );
+    try {
+        await sendEmail(
+            email,
+            "Email Change Verification",
+            `Your OTP is: ${otp}. Use this OTP to verify your new email address.`,
+            `
+                <p>Your email change verification OTP is:</p>
+                <h2>${otp}</h2>
+                <p>This OTP expires in 10 minutes.</p>
+                <p>Enter this OTP to verify your new email address.</p>
+            `
+        );
+    } catch (error) {
+        await otpModel.findByIdAndDelete(otpDoc._id);
+
+        throw error;
+    }
 
     res.status(200).json({
         message: "OTP sent to new email address"
     });
 }
+
 
 export async function verifyEmailChange(req, res) {
     const user = req.user;
@@ -807,6 +851,7 @@ export async function verifyEmailChange(req, res) {
     });
 }
 
+
 export async function getSessions(req, res) {
     const user = req.user;
 
@@ -820,6 +865,7 @@ export async function getSessions(req, res) {
         sessions
     });
 }
+
 
 export async function revokeSession(req, res) {
     const user = req.user;
