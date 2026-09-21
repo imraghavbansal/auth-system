@@ -21,7 +21,14 @@ emailWorker.on("completed", (job) => {
 });
 
 emailWorker.on("failed", (job, error) => {
-    console.error(`Email job ${job?.id} failed:`, error.message);
+    console.error(
+        `Email job ${job?.id} failed on attempt ${job?.attemptsMade}:`,
+        error.message
+    );
+
+    if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
+        console.error(`Email job ${job.id} permanently failed`);
+    }
 });
 
 console.log("Email worker started");
