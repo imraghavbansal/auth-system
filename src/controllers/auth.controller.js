@@ -3,7 +3,7 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import config from "../config/config.js";
 import sessionModel from "../models/session.model.js";
-import { sendEmail } from "../services/email.service.js";
+import emailQueue from "../queues/email.queue.js";
 import { generateOtp, getOtpHtml } from "../utils/utils.js";
 import otpModel from "../models/otp.model.js";
 import argon2 from "argon2";
@@ -56,12 +56,12 @@ export async function register(req, res) {
     const otpHtml = getOtpHtml(otp);
 
     try {
-        await sendEmail(
-            email,
-            "OTP Verification",
-            "",
-            otpHtml
-        );
+        await emailQueue.add("send-email", {
+            to: email,
+            subject: "OTP Verification",
+            text: "",
+            html: otpHtml
+        });
     } catch (error) {
         await otpModel.findByIdAndDelete(otpDoc._id);
         await userModel.findByIdAndDelete(user._id);
@@ -462,12 +462,12 @@ export async function forgotPassword(req, res) {
     const resetUrl = `http://localhost:3000/api/auth/reset-password?token=${resetToken}&email=${email}`;
 
     try {
-        await sendEmail(
-            email,
-            "Password Reset",
-            `Reset your password using this link: ${resetUrl}`,
-            `<p>Reset your password using this link:</p><a href="${resetUrl}">${resetUrl}</a>`
-        );
+        await emailQueue.add("send-email", {
+            to: email,
+            subject: "Password Reset",
+            text: `Reset your password using this link: ${resetUrl}`,
+            html: `<p>Reset your password using this link:</p><a href="${resetUrl}">${resetUrl}</a>`
+        });
     } catch (error) {
         user.resetPasswordToken = null;
         user.resetPasswordTokenExpiresAt = null;
@@ -648,11 +648,11 @@ export async function resendOtp(req, res) {
     const otpUrl = `http://localhost:3000/api/auth/verify-otp?email=${email}&otp=${otp}`;
 
     try {
-        await sendEmail(
-            email,
-            "OTP Verification",
-            `Your OTP is: ${otp}. Use this OTP to verify your email.`,
-            `
+        await emailQueue.add("send-email", {
+            to: email,
+            subject: "OTP Verification",
+            text: `Your OTP is: ${otp}. Use this OTP to verify your email.`,
+            html: `
                 <p>Your email verification OTP is:</p>
                 <h2>${otp}</h2>
                 <p>This OTP expires in 10 minutes.</p>
@@ -660,7 +660,7 @@ export async function resendOtp(req, res) {
                 <p>Or use this verification link:</p>
                 <a href="${otpUrl}">${otpUrl}</a>
             `
-        );
+        });
     } catch (error) {
         await otpModel.findByIdAndDelete(otpDoc._id);
 
@@ -766,17 +766,17 @@ export async function changeEmail(req, res) {
     });
 
     try {
-        await sendEmail(
-            email,
-            "Email Change Verification",
-            `Your OTP is: ${otp}. Use this OTP to verify your new email address.`,
-            `
+        await emailQueue.add("send-email", {
+            to: email,
+            subject: "Email Change Verification",
+            text: `Your OTP is: ${otp}. Use this OTP to verify your new email address.`,
+            html: `
                 <p>Your email change verification OTP is:</p>
                 <h2>${otp}</h2>
                 <p>This OTP expires in 10 minutes.</p>
                 <p>Enter this OTP to verify your new email address.</p>
             `
-        );
+        });
     } catch (error) {
         await otpModel.findByIdAndDelete(otpDoc._id);
 
