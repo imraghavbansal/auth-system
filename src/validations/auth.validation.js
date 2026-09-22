@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { registerSchema } from "./auth.validation.js";
 
 export const registerSchema = z.object({
     body: z.object({
