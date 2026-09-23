@@ -68,6 +68,7 @@ authRouter.get(
  */
 authRouter.get(
     "/logout-all",
+    asyncHandler(authenticateUser),
     asyncHandler(authController.logoutAllSessions)
 );
 

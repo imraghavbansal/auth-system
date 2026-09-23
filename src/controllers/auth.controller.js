@@ -350,19 +350,9 @@ export async function logout(req, res) {
 
 
 export async function logoutAllSessions(req, res) {
-    const refreshToken = req.cookies.refreshToken;
-
-    if (!refreshToken) {
-        return res.status(401).json({
-            message: "No refresh token provided"
-        });
-    }
-
-    const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
-
     await sessionModel.updateMany(
         {
-            userId: decoded.id,
+            userId: req.user._id,
             revoked: false
         },
         {
