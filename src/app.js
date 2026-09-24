@@ -6,6 +6,9 @@ import mongoose from "mongoose";
 
 import redis from "./config/redis.js";
 
+import swaggerUi from "swagger-ui-express";
+import swaggerSpec from "./config/swagger.js";
+
 import { errorHandler } from "./middleware/error.middleware.js";
 
 const app = express();
@@ -48,6 +51,12 @@ app.get("/health", async (req, res) => {
         redis: redisHealthy ? "connected" : "disconnected"
     });
 });
+
+app.use(
+    "/api-docs",
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerSpec)
+);
 
 app.use("/api/auth", authRouter);
 
