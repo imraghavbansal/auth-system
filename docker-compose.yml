@@ -1,0 +1,30 @@
+services:
+  api:
+    build: .
+    container_name: auth-api
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - redis
+
+  worker:
+    build: .
+    container_name: auth-worker
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - redis
+    command: ["node", "src/workers/email.worker.js"]
+
+  redis:
+    image: redis:7
+    container_name: auth-redis
+    ports:
+      - "6379:6379"
+      
