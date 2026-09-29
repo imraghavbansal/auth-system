@@ -1,26 +1,33 @@
 import dotenv from "dotenv";
-dotenv.config();               //isko call kre bina .env ke jitne vairbales create hue h wo kaam nhi krenge
 
-if(!process.env.MONGO_URI){
+dotenv.config();
+
+if (!process.env.MONGO_URI) {
     throw new Error("MONGO_URI is not defined in .env file");
 }
 
-if(!process.env.JWT_SECRET){
+if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET is not defined in .env file");
 }
 
-if(!process.env.GOOGLE_CLIENT_ID){
+if (!process.env.GOOGLE_CLIENT_ID) {
     throw new Error("GOOGLE_CLIENT_ID is not defined in .env file");
 }
 
-if(!process.env.GOOGLE_CLIENT_SECRET){
+if (!process.env.GOOGLE_CLIENT_SECRET) {
     throw new Error("GOOGLE_CLIENT_SECRET is not defined in .env file");
 }
-if(!process.env.GOOGLE_REFRESH_TOKEN){
+
+if (!process.env.GOOGLE_REFRESH_TOKEN) {
     throw new Error("GOOGLE_REFRESH_TOKEN is not defined in .env file");
 }
-if(!process.env.GOOGLE_USER){
+
+if (!process.env.GOOGLE_USER) {
     throw new Error("GOOGLE_USER is not defined in .env file");
+}
+
+if (!process.env.APP_BASE_URL) {
+    throw new Error("APP_BASE_URL is not defined in .env file");
 }
 
 const config = {
@@ -29,7 +36,10 @@ const config = {
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     GOOGLE_REFRESH_TOKEN: process.env.GOOGLE_REFRESH_TOKEN,
-    GOOGLE_USER: process.env.GOOGLE_USER
-}
+    GOOGLE_USER: process.env.GOOGLE_USER,
+    APP_BASE_URL: process.env.APP_BASE_URL,
+    PORT: Number(process.env.PORT) || 3000,
+    NODE_ENV: process.env.NODE_ENV || "development"
+};
 
 export default config;

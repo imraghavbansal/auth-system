@@ -9,6 +9,12 @@ import otpModel from "../models/otp.model.js";
 import argon2 from "argon2";
 import loginAttemptModel from "../models/login-attempt.model.js";
 
+const refreshCookieOptions = {
+    httpOnly: true,
+    secure: config.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 7 * 24 * 60 * 60 * 1000
+};
 
 export async function register(req, res) {
     const { username, email, password } = req.body;
@@ -79,7 +85,6 @@ export async function register(req, res) {
     });
 }
 
-
 export async function login(req, res) {
     const { email, password } = req.body;
 
@@ -95,7 +100,6 @@ export async function login(req, res) {
     const windowDuration = 15 * 60 * 1000;
     const maxAttempts = 5;
 
-    // Start a new rate-limit window if the previous one expired
     if (
         loginAttempt &&
         now - loginAttempt.windowStartedAt.getTime() >= windowDuration
@@ -107,7 +111,6 @@ export async function login(req, res) {
         await loginAttempt.save();
     }
 
-    // Check whether login is currently blocked
     if (
         loginAttempt?.blockedUntil &&
         loginAttempt.blockedUntil.getTime() > now
@@ -186,7 +189,6 @@ export async function login(req, res) {
         });
     }
 
-    // Successful login clears the failed-attempt record
     if (loginAttempt) {
         await loginAttemptModel.deleteOne({
             _id: loginAttempt._id
@@ -217,12 +219,7 @@ export async function login(req, res) {
         { expiresIn: "15m" }
     );
 
-    res.cookie("refreshToken", refreshToken, {
-        httpOnly: true,
-        secure: true,
-        sameSite: "strict",
-        maxAge: 7 * 24 * 60 * 60 * 1000
-    });
+    res.cookie("refreshToken", refreshToken, refreshCookieOptions);
 
     res.status(200).json({
         message: "User logged in successfully",
@@ -233,7 +230,6 @@ export async function login(req, res) {
         accessToken
     });
 }
-
 
 export async function getMe(req, res) {
     const user = req.user;
@@ -246,7 +242,6 @@ export async function getMe(req, res) {
         }
     });
 }
-
 
 export async function refreshToken(req, res) {
     const refreshToken = req.cookies.refreshToken;
@@ -298,19 +293,13 @@ export async function refreshToken(req, res) {
 
     await session.save();
 
-    res.cookie("refreshToken", newRefreshToken, {
-        httpOnly: true,
-        secure: true,
-        sameSite: "strict",
-        maxAge: 7 * 24 * 60 * 60 * 1000
-    });
+    res.cookie("refreshToken", newRefreshToken, refreshCookieOptions);
 
     res.status(200).json({
         message: "Access token refreshed successfully",
         accessToken
     });
 }
-
 
 export async function logout(req, res) {
     const refreshToken = req.cookies.refreshToken;
@@ -341,13 +330,12 @@ export async function logout(req, res) {
 
     await session.save();
 
-    res.clearCookie("refreshToken");
+    res.clearCookie("refreshToken", refreshCookieOptions);
 
     res.status(200).json({
         message: "User logged out successfully"
     });
 }
-
 
 export async function logoutAllSessions(req, res) {
     await sessionModel.updateMany(
@@ -360,13 +348,12 @@ export async function logoutAllSessions(req, res) {
         }
     );
 
-    res.clearCookie("refreshToken");
+    res.clearCookie("refreshToken", refreshCookieOptions);
 
     res.status(200).json({
         message: "User logged out from all sessions successfully"
     });
 }
-
 
 export async function verifyEmail(req, res) {
     const { otp, email } = req.body;
@@ -423,7 +410,6 @@ export async function verifyEmail(req, res) {
     });
 }
 
-
 export async function forgotPassword(req, res) {
     const { email } = req.body;
 
@@ -449,7 +435,7 @@ export async function forgotPassword(req, res) {
 
     await user.save();
 
-    const resetUrl = `http://localhost:3000/api/auth/reset-password?token=${resetToken}&email=${email}`;
+    const resetUrl = `${config.APP_BASE_URL}/api/auth/reset-password?token=${resetToken}&email=${email}`;
 
     try {
         await emailQueue.add("send-email", {
@@ -471,7 +457,6 @@ export async function forgotPassword(req, res) {
         message: "Password reset link sent successfully"
     });
 }
-
 
 export async function resetPassword(req, res) {
     const { token, email, password } = req.body;
@@ -532,7 +517,6 @@ export async function resetPassword(req, res) {
     });
 }
 
-
 export async function changePassword(req, res) {
     const { currentPassword, newPassword } = req.body;
     const user = req.user;
@@ -571,7 +555,6 @@ export async function changePassword(req, res) {
     });
 }
 
-
 export async function resendOtp(req, res) {
     const { email } = req.body;
 
@@ -589,7 +572,6 @@ export async function resendOtp(req, res) {
         });
     }
 
-    // Check whether the user recently requested an OTP
     const existingOtp = await otpModel.findOne({
         email,
         user: user._id,
@@ -635,7 +617,7 @@ export async function resendOtp(req, res) {
         expiresAt
     });
 
-    const otpUrl = `http://localhost:3000/api/auth/verify-otp?email=${email}&otp=${otp}`;
+    const otpUrl = `${config.APP_BASE_URL}/api/auth/verify-otp?email=${email}&otp=${otp}`;
 
     try {
         await emailQueue.add("send-email", {
@@ -662,7 +644,6 @@ export async function resendOtp(req, res) {
     });
 }
 
-
 export async function deleteAccount(req, res) {
     const user = req.user;
 
@@ -681,7 +662,6 @@ export async function deleteAccount(req, res) {
     });
 }
 
-
 export async function getProfile(req, res) {
     const user = req.user;
 
@@ -694,7 +674,6 @@ export async function getProfile(req, res) {
         }
     });
 }
-
 
 export async function updateProfile(req, res) {
     const user = req.user;
@@ -713,7 +692,6 @@ export async function updateProfile(req, res) {
         }
     });
 }
-
 
 export async function changeEmail(req, res) {
     const user = req.user;
@@ -778,7 +756,6 @@ export async function changeEmail(req, res) {
     });
 }
 
-
 export async function verifyEmailChange(req, res) {
     const user = req.user;
     const { otp, email } = req.body;
@@ -841,7 +818,6 @@ export async function verifyEmailChange(req, res) {
     });
 }
 
-
 export async function getSessions(req, res) {
     const user = req.user;
 
@@ -855,7 +831,6 @@ export async function getSessions(req, res) {
         sessions
     });
 }
-
 
 export async function revokeSession(req, res) {
     const user = req.user;

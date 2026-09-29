@@ -2,8 +2,9 @@ import app from "./src/app.js";
 import connectDB from "./src/config/database.js";
 import mongoose from "mongoose";
 import redis from "./src/config/redis.js";
+import config from "./src/config/config.js";
 
-const PORT = 3000;
+const PORT = config.PORT;
 
 connectDB();
 
