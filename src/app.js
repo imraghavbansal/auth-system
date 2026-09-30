@@ -32,24 +32,22 @@ app.get("/ready", async (req, res) => {
 
     let redisHealthy = false;
 
-    if (redis.status === "ready") {
-        try {
-            const redisPing = redis.ping();
+    try {
+        const redisPing = redis.ping();
 
-            const timeout = new Promise((_, reject) => {
-                setTimeout(() => {
-                    reject(new Error("Redis health check timed out"));
-                }, 1000);
-            });
+        const timeout = new Promise((_, reject) => {
+            setTimeout(() => {
+                reject(new Error("Redis health check timed out"));
+            }, 1000);
+        });
 
-            redisHealthy =
-                (await Promise.race([
-                    redisPing,
-                    timeout
-                ])) === "PONG";
-        } catch (error) {
-            redisHealthy = false;
-        }
+        redisHealthy =
+            (await Promise.race([
+                redisPing,
+                timeout
+            ])) === "PONG";
+    } catch (error) {
+        redisHealthy = false;
     }
 
     const ready = mongoHealthy && redisHealthy;
