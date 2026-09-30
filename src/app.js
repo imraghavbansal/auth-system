@@ -19,33 +19,43 @@ app.use(morgan("dev"));
 
 app.use(cookieParser());
 
-app.get("/health", async (req, res) => {
+// Basic liveness check for Render
+app.get("/health", (req, res) => {
+    res.status(200).json({
+        status: "ok"
+    });
+});
+
+// Dependency readiness check
+app.get("/ready", async (req, res) => {
     const mongoHealthy = mongoose.connection.readyState === 1;
 
     let redisHealthy = false;
 
-    try {
-        const redisPing = redis.ping();
+    if (redis.status === "ready") {
+        try {
+            const redisPing = redis.ping();
 
-        const timeout = new Promise((_, reject) => {
-            setTimeout(() => {
-                reject(new Error("Redis health check timed out"));
-            }, 1000);
-        });
+            const timeout = new Promise((_, reject) => {
+                setTimeout(() => {
+                    reject(new Error("Redis health check timed out"));
+                }, 1000);
+            });
 
-        redisHealthy =
-            (await Promise.race([
-                redisPing,
-                timeout
-            ])) === "PONG";
-    } catch (error) {
-        redisHealthy = false;
+            redisHealthy =
+                (await Promise.race([
+                    redisPing,
+                    timeout
+                ])) === "PONG";
+        } catch (error) {
+            redisHealthy = false;
+        }
     }
 
-    const healthy = mongoHealthy && redisHealthy;
+    const ready = mongoHealthy && redisHealthy;
 
-    res.status(healthy ? 200 : 503).json({
-        status: healthy ? "ok" : "unhealthy",
+    res.status(ready ? 200 : 503).json({
+        status: ready ? "ready" : "not ready",
         database: mongoHealthy ? "connected" : "disconnected",
         redis: redisHealthy ? "connected" : "disconnected"
     });
