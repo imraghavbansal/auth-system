@@ -6,29 +6,48 @@ const userSchema = new mongoose.Schema({
         required: [true, "Username is required"],
         unique: [true, "Username must be unique"]
     },
+
     email: {
         type: String,
         required: [true, "Email is required"],
         unique: [true, "Email must be unique"]
-    
     },
+
     password: {
         type: String,
-        required: [true, "Password is required"]
+        required: function () {
+            return this.authProvider === "local";
+        },
+        default: null
     },
+
+    authProvider: {
+        type: String,
+        enum: ["local", "google"],
+        default: "local"
+    },
+
+    googleId: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
+
     verified: {
         type: Boolean,
         default: false
     },
+
     resetPasswordToken: {
-    type: String,
-    default: null
+        type: String,
+        default: null
     },
+
     resetPasswordTokenExpiresAt: {
-    type: Date,
-    default: null
-}
-})
+        type: Date,
+        default: null
+    }
+});
 
 const userModel = mongoose.model("Users", userSchema);
 

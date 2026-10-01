@@ -8,6 +8,11 @@ import { generateOtp, getOtpHtml } from "../utils/utils.js";
 import otpModel from "../models/otp.model.js";
 import argon2 from "argon2";
 import loginAttemptModel from "../models/login-attempt.model.js";
+import {
+    generateGoogleState,
+    getGoogleAuthorizationUrl,
+    getGoogleUser
+} from "../services/google-auth.service.js";
 
 const refreshCookieOptions = {
     httpOnly: true,
@@ -153,6 +158,12 @@ export async function login(req, res) {
         });
     }
 
+    if (user.authProvider === "google") {
+    return res.status(401).json({
+        message: "This account uses Google login. Please continue with Google."
+    });
+    }
+
     if (!user.verified) {
         return res.status(403).json({
             message: "Email not verified. Please verify your email before logging in."
@@ -240,6 +251,152 @@ export async function getMe(req, res) {
             username: user.username,
             email: user.email
         }
+    });
+}
+
+export async function googleAuth(req, res) {
+    const state = generateGoogleState();
+
+    res.cookie("googleOAuthState", state, {
+        httpOnly: true,
+        secure: config.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 10 * 60 * 1000
+    });
+
+    const authorizationUrl = getGoogleAuthorizationUrl(state);
+
+    res.redirect(authorizationUrl);
+}
+
+export async function googleCallback(req, res) {
+    const { code, state } = req.query;
+
+    const storedState = req.cookies.googleOAuthState;
+
+    res.clearCookie("googleOAuthState", {
+        httpOnly: true,
+        secure: config.NODE_ENV === "production",
+        sameSite: "lax"
+    });
+
+    if (!state || !storedState || state !== storedState) {
+        return res.status(400).json({
+            message: "Invalid OAuth state"
+        });
+    }
+
+    if (!code) {
+        return res.status(400).json({
+            message: "Google authorization code is missing"
+        });
+    }
+
+    let googleUser;
+
+    try {
+        googleUser = await getGoogleUser(code);
+    } catch (error) {
+        console.error("Google OAuth error:", error);
+
+        return res.status(401).json({
+            message: "Unable to authenticate with Google"
+        });
+    }
+
+    if (
+        !googleUser.googleId ||
+        !googleUser.email
+    ) {
+        return res.status(401).json({
+            message: "Google account information is incomplete"
+        });
+    }
+
+    if (!googleUser.emailVerified) {
+        return res.status(403).json({
+            message: "Google email is not verified"
+        });
+    }
+
+    let user = await userModel.findOne({
+        googleId: googleUser.googleId
+    });
+
+    if (!user) {
+        const existingUser = await userModel.findOne({
+            email: googleUser.email
+        });
+
+        if (existingUser) {
+            return res.status(409).json({
+                message:
+                    "An account with this email already exists. Please log in with your existing account."
+            });
+        }
+
+        let usernameBase = googleUser.email
+            .split("@")[0]
+            .replace(/[^a-zA-Z0-9_]/g, "_");
+
+        if (usernameBase.length < 3) {
+            usernameBase = `user_${usernameBase}`;
+        }
+
+        let username = usernameBase;
+        let suffix = 1;
+
+        while (await userModel.exists({ username })) {
+            username = `${usernameBase}_${suffix}`;
+            suffix += 1;
+        }
+
+        user = await userModel.create({
+            username,
+            email: googleUser.email,
+            authProvider: "google",
+            googleId: googleUser.googleId,
+            verified: true
+        });
+    }
+
+    const refreshToken = jwt.sign(
+        { id: user._id },
+        config.JWT_SECRET,
+        { expiresIn: "7d" }
+    );
+
+    const refreshTokenHash = crypto
+        .createHash("sha256")
+        .update(refreshToken)
+        .digest("hex");
+
+    await sessionModel.create({
+        userId: user._id,
+        refreshTokenHash,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"]
+    });
+
+    const accessToken = jwt.sign(
+        { id: user._id },
+        config.JWT_SECRET,
+        { expiresIn: "15m" }
+    );
+
+    res.cookie(
+        "refreshToken",
+        refreshToken,
+        refreshCookieOptions
+    );
+
+    res.status(200).json({
+        message: "Google login successful",
+        user: {
+            username: user.username,
+            email: user.email
+        },
+        accessToken
     });
 }
 
@@ -421,6 +578,12 @@ export async function forgotPassword(req, res) {
         });
     }
 
+    if (user.authProvider === "google") {
+    return res.status(400).json({
+        message: "Google accounts cannot reset their password here. Please continue with Google."
+    });
+    }
+
     const resetToken = crypto.randomBytes(32).toString("hex");
 
     const resetTokenHash = crypto
@@ -467,6 +630,12 @@ export async function resetPassword(req, res) {
         return res.status(404).json({
             message: "User not found"
         });
+    }
+
+    if (user.authProvider === "google") {
+    return res.status(400).json({
+        message: "Google accounts cannot reset their password here. Please continue with Google."
+    });
     }
 
     const resetTokenHash = crypto
@@ -520,6 +689,12 @@ export async function resetPassword(req, res) {
 export async function changePassword(req, res) {
     const { currentPassword, newPassword } = req.body;
     const user = req.user;
+
+    if (user.authProvider === "google") {
+        return res.status(400).json({
+            message: "Google accounts cannot change password here. Please continue with Google."
+        });
+    }
 
     const isCurrentPasswordValid = await argon2.verify(
         user.password,

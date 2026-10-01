@@ -131,6 +131,45 @@ authRouter.post(
     validate(loginSchema),
     asyncHandler(authController.login)
 );
+/**
+ * @openapi
+ * /api/auth/google:
+ *   get:
+ *     tags:
+ *       - Authentication
+ *     summary: Redirect to Google authentication
+ *     description: Redirects the user to the Google authentication page.
+ *     responses:
+ *       200:
+ *         description: Redirected to Google authentication page
+ */
+authRouter.get(
+    "/google",
+    asyncHandler(authController.googleAuth)
+);
+
+/**
+ * @openapi
+ * /api/auth/google/callback:
+ *   get:
+ *     tags:
+ *       - Authentication
+ *     summary: Handle Google authentication callback
+ *     description: Handles the callback from Google authentication and exchanges the authorization code for an access token.
+ *     responses:
+ *       200:
+ *         description: User authenticated successfully
+ *       400:
+ *         description: Invalid authorization code
+ *       401:
+ *         description: Unable to authenticate with Google
+ *       500:
+ *         description: Internal server error
+ */
+authRouter.get(
+    "/google/callback",
+    asyncHandler(authController.googleCallback)
+);
 
 /**
  * @openapi

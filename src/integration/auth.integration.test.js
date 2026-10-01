@@ -29,6 +29,12 @@ vi.mock("../queues/email.queue.js", () => ({
     }
 }));
 
+vi.mock("../services/google-auth.service.js", () => ({
+    generateGoogleState: vi.fn(),
+    getGoogleAuthorizationUrl: vi.fn(),
+    getGoogleUser: vi.fn()
+}));
+
 import app from "../app.js";
 import config from "../config/config.js";
 import userModel from "../models/user.model.js";
@@ -36,6 +42,11 @@ import otpModel from "../models/otp.model.js";
 import sessionModel from "../models/session.model.js";
 import loginAttemptModel from "../models/login-attempt.model.js";
 import emailQueue from "../queues/email.queue.js";
+import {
+    generateGoogleState,
+    getGoogleAuthorizationUrl,
+    getGoogleUser
+} from "../services/google-auth.service.js";
 
 const TEST_PASSWORD = "Password123!";
 const TEST_PASSWORD_2 = "NewPassword123!";
@@ -44,17 +55,24 @@ const createUser = async ({
     username = `testuser_${Date.now()}_${Math.random()}`,
     email = `test_${Date.now()}_${Math.random()}@example.com`,
     password = TEST_PASSWORD,
-    verified = true
+    verified = true,
+    authProvider = "local",
+    googleId
 } = {}) => {
-    const hashedPassword = await argon2.hash(password, {
-        type: argon2.argon2id
-    });
+    const hashedPassword =
+        authProvider === "local"
+            ? await argon2.hash(password, {
+                  type: argon2.argon2id
+              })
+            : null;
 
     return userModel.create({
         username,
         email,
         password: hashedPassword,
-        verified
+        verified,
+        authProvider,
+        ...(googleId ? { googleId } : {})
     });
 };
 
@@ -82,6 +100,20 @@ const createRefreshToken = () => {
     );
 };
 
+const getRefreshTokenFromCookies = (cookies = []) => {
+    const refreshCookie = cookies.find((cookie) =>
+        cookie.startsWith("refreshToken=")
+    );
+
+    if (!refreshCookie) {
+        return null;
+    }
+
+    return refreshCookie
+        .split(";")[0]
+        .replace("refreshToken=", "");
+};
+
 beforeAll(async () => {
     await mongoose.connect(process.env.MONGO_TEST_URI);
 });
@@ -95,6 +127,10 @@ afterEach(async () => {
     ]);
 
     vi.clearAllMocks();
+
+    generateGoogleState.mockReset();
+    getGoogleAuthorizationUrl.mockReset();
+    getGoogleUser.mockReset();
 
     emailQueue.add.mockResolvedValue({
         id: "test-email-job"
@@ -311,6 +347,363 @@ describe("Authentication security and edge cases", () => {
                 });
 
             expect(blockedResponse.status).toBe(429);
+        });
+    });
+
+    describe("Google OAuth", () => {
+        it("redirects to Google authentication and stores OAuth state", async () => {
+            const state = "test-google-state";
+            const authorizationUrl =
+                "https://accounts.google.com/o/oauth2/v2/auth?test=true";
+
+            generateGoogleState.mockReturnValue(state);
+            getGoogleAuthorizationUrl.mockReturnValue(authorizationUrl);
+
+            const response = await request(app)
+                .get("/api/auth/google");
+
+            expect(response.status).toBe(302);
+            expect(response.headers.location).toBe(authorizationUrl);
+
+            expect(generateGoogleState).toHaveBeenCalledTimes(1);
+            expect(getGoogleAuthorizationUrl).toHaveBeenCalledWith(state);
+
+            expect(response.headers["set-cookie"]).toBeDefined();
+
+            const stateCookie = response.headers["set-cookie"].find(
+                (cookie) => cookie.startsWith("googleOAuthState=")
+            );
+
+            expect(stateCookie).toBeDefined();
+            expect(stateCookie).toContain(
+                `googleOAuthState=${state}`
+            );
+            expect(stateCookie).toContain("HttpOnly");
+            expect(stateCookie).toContain("SameSite=Lax");
+        });
+
+        it("rejects Google callback when OAuth state is missing", async () => {
+            const response = await request(app)
+                .get("/api/auth/google/callback")
+                .query({
+                    code: "test-code"
+                });
+
+            expect(response.status).toBe(400);
+            expect(response.body.message).toBe("Invalid OAuth state");
+
+            expect(getGoogleUser).not.toHaveBeenCalled();
+        });
+
+        it("rejects Google callback when OAuth state is invalid", async () => {
+            const response = await request(app)
+                .get("/api/auth/google/callback")
+                .set(
+                    "Cookie",
+                    "googleOAuthState=correct-state"
+                )
+                .query({
+                    code: "test-code",
+                    state: "wrong-state"
+                });
+
+            expect(response.status).toBe(400);
+            expect(response.body.message).toBe("Invalid OAuth state");
+
+            expect(getGoogleUser).not.toHaveBeenCalled();
+        });
+
+        it("rejects Google callback when authorization code is missing", async () => {
+            const response = await request(app)
+                .get("/api/auth/google/callback")
+                .set(
+                    "Cookie",
+                    "googleOAuthState=valid-state"
+                )
+                .query({
+                    state: "valid-state"
+                });
+
+            expect(response.status).toBe(400);
+            expect(response.body.message).toBe(
+                "Google authorization code is missing"
+            );
+
+            expect(getGoogleUser).not.toHaveBeenCalled();
+        });
+
+        it("rejects Google callback when Google authentication fails", async () => {
+            getGoogleUser.mockRejectedValueOnce(
+                new Error("Google token exchange failed")
+            );
+
+            const response = await request(app)
+                .get("/api/auth/google/callback")
+                .set(
+                    "Cookie",
+                    "googleOAuthState=valid-state"
+                )
+                .query({
+                    code: "invalid-google-code",
+                    state: "valid-state"
+                });
+
+            expect(response.status).toBe(401);
+            expect(response.body.message).toBe(
+                "Unable to authenticate with Google"
+            );
+
+            expect(getGoogleUser).toHaveBeenCalledWith(
+                "invalid-google-code"
+            );
+        });
+
+        it("rejects Google callback when Google account information is incomplete", async () => {
+            getGoogleUser.mockResolvedValueOnce({
+                googleId: null,
+                email: "google@example.com",
+                emailVerified: true
+            });
+
+            const response = await request(app)
+                .get("/api/auth/google/callback")
+                .set(
+                    "Cookie",
+                    "googleOAuthState=valid-state"
+                )
+                .query({
+                    code: "google-code",
+                    state: "valid-state"
+                });
+
+            expect(response.status).toBe(401);
+            expect(response.body.message).toBe(
+                "Google account information is incomplete"
+            );
+        });
+
+        it("rejects Google callback when Google email is not verified", async () => {
+            getGoogleUser.mockResolvedValueOnce({
+                googleId: "google-user-123",
+                email: "unverified@example.com",
+                emailVerified: false
+            });
+
+            const response = await request(app)
+                .get("/api/auth/google/callback")
+                .set(
+                    "Cookie",
+                    "googleOAuthState=valid-state"
+                )
+                .query({
+                    code: "google-code",
+                    state: "valid-state"
+                });
+
+            expect(response.status).toBe(403);
+            expect(response.body.message).toBe(
+                "Google email is not verified"
+            );
+
+            const user = await userModel.findOne({
+                email: "unverified@example.com"
+            });
+
+            expect(user).toBeNull();
+        });
+
+        it("creates a new Google user and session successfully", async () => {
+            getGoogleUser.mockResolvedValueOnce({
+                googleId: "google-new-user-123",
+                email: "newgoogleuser@example.com",
+                emailVerified: true,
+                name: "New Google User"
+            });
+
+            const response = await request(app)
+                .get("/api/auth/google/callback")
+                .set(
+                    "Cookie",
+                    "googleOAuthState=valid-state"
+                )
+                .set(
+                    "User-Agent",
+                    "google-oauth-integration-test"
+                )
+                .query({
+                    code: "google-code",
+                    state: "valid-state"
+                });
+
+            expect(response.status).toBe(200);
+
+            expect(response.body.message).toBe(
+                "Google login successful"
+            );
+
+            expect(response.body.user).toEqual({
+                username: "newgoogleuser",
+                email: "newgoogleuser@example.com"
+            });
+
+            expect(response.body.accessToken).toBeDefined();
+
+            const user = await userModel.findOne({
+                googleId: "google-new-user-123"
+            });
+
+            expect(user).not.toBeNull();
+            expect(user.email).toBe(
+                "newgoogleuser@example.com"
+            );
+            expect(user.authProvider).toBe("google");
+            expect(user.googleId).toBe(
+                "google-new-user-123"
+            );
+            expect(user.verified).toBe(true);
+            expect(user.password).toBeNull();
+
+            const sessions = await sessionModel.find({
+                userId: user._id
+            });
+
+            expect(sessions).toHaveLength(1);
+            expect(sessions[0].revoked).toBe(false);
+            expect(sessions[0].refreshTokenHash).toBeDefined();
+            expect(sessions[0].userAgent).toBe(
+                "google-oauth-integration-test"
+            );
+
+            const payload = jwt.verify(
+                response.body.accessToken,
+                config.JWT_SECRET
+            );
+
+            expect(payload.id).toBe(user._id.toString());
+
+            expect(response.headers["set-cookie"]).toBeDefined();
+
+            const refreshToken = getRefreshTokenFromCookies(
+                response.headers["set-cookie"]
+            );
+
+            expect(refreshToken).not.toBeNull();
+
+            const refreshTokenHash = crypto
+                .createHash("sha256")
+                .update(refreshToken)
+                .digest("hex");
+
+            expect(sessions[0].refreshTokenHash).toBe(
+                refreshTokenHash
+            );
+        });
+
+        it("logs in an existing Google user and creates a new session", async () => {
+            const user = await createUser({
+                username: "existing_google_user",
+                email: "existinggoogle@example.com",
+                authProvider: "google",
+                googleId: "existing-google-id",
+                verified: true
+            });
+
+            getGoogleUser.mockResolvedValueOnce({
+                googleId: "existing-google-id",
+                email: "existinggoogle@example.com",
+                emailVerified: true,
+                name: "Existing Google User"
+            });
+
+            const response = await request(app)
+                .get("/api/auth/google/callback")
+                .set(
+                    "Cookie",
+                    "googleOAuthState=valid-state"
+                )
+                .set(
+                    "User-Agent",
+                    "google-existing-user-test"
+                )
+                .query({
+                    code: "google-code",
+                    state: "valid-state"
+                });
+
+            expect(response.status).toBe(200);
+
+            expect(response.body.user).toEqual({
+                username: "existing_google_user",
+                email: "existinggoogle@example.com"
+            });
+
+            expect(response.body.accessToken).toBeDefined();
+
+            const users = await userModel.find({
+                googleId: "existing-google-id"
+            });
+
+            expect(users).toHaveLength(1);
+            expect(users[0]._id.toString()).toBe(
+                user._id.toString()
+            );
+
+            const sessions = await sessionModel.find({
+                userId: user._id
+            });
+
+            expect(sessions).toHaveLength(1);
+            expect(sessions[0].revoked).toBe(false);
+            expect(sessions[0].userAgent).toBe(
+                "google-existing-user-test"
+            );
+        });
+
+        it("rejects Google login when the email already belongs to a local account", async () => {
+            const localUser = await createUser({
+                username: "existing_local_user",
+                email: "localaccount@example.com",
+                authProvider: "local",
+                verified: true
+            });
+
+            getGoogleUser.mockResolvedValueOnce({
+                googleId: "google-conflict-id",
+                email: "localaccount@example.com",
+                emailVerified: true,
+                name: "Local Account"
+            });
+
+            const response = await request(app)
+                .get("/api/auth/google/callback")
+                .set(
+                    "Cookie",
+                    "googleOAuthState=valid-state"
+                )
+                .query({
+                    code: "google-code",
+                    state: "valid-state"
+                });
+
+            expect(response.status).toBe(409);
+
+            expect(response.body.message).toBe(
+                "An account with this email already exists. Please log in with your existing account."
+            );
+
+            const user = await userModel.findById(
+                localUser._id
+            );
+
+            expect(user).not.toBeNull();
+            expect(user.authProvider).toBe("local");
+            expect(user.googleId).toBeUndefined();
+
+            const sessions = await sessionModel.find({
+                userId: localUser._id
+            });
+
+            expect(sessions).toHaveLength(0);
         });
     });
 

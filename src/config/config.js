@@ -30,6 +30,14 @@ if (!process.env.APP_BASE_URL) {
     throw new Error("APP_BASE_URL is not defined in .env file");
 }
 
+if (!process.env.GOOGLE_AUTH_CLIENT_ID) {
+    throw new Error("GOOGLE_AUTH_CLIENT_ID is not defined in .env file");
+}
+
+if (!process.env.GOOGLE_AUTH_CLIENT_SECRET) {
+    throw new Error("GOOGLE_AUTH_CLIENT_SECRET is not defined in .env file");
+}
+
 const config = {
     MONGO_URI: process.env.MONGO_URI,
     JWT_SECRET: process.env.JWT_SECRET,
@@ -39,7 +47,9 @@ const config = {
     GOOGLE_USER: process.env.GOOGLE_USER,
     APP_BASE_URL: process.env.APP_BASE_URL,
     PORT: Number(process.env.PORT) || 3000,
-    NODE_ENV: process.env.NODE_ENV || "development"
+    NODE_ENV: process.env.NODE_ENV || "development",
+    GOOGLE_AUTH_CLIENT_ID: process.env.GOOGLE_AUTH_CLIENT_ID,
+    GOOGLE_AUTH_CLIENT_SECRET: process.env.GOOGLE_AUTH_CLIENT_SECRET
 };
 
 export default config;
