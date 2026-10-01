@@ -23,7 +23,7 @@ const userSchema = new mongoose.Schema({
 
     authProvider: {
         type: String,
-        enum: ["local", "google"],
+        enum: ["local", "google", "github"],
         default: "local"
     },
 
@@ -32,6 +32,12 @@ const userSchema = new mongoose.Schema({
         unique: true,
         sparse: true
     },
+
+    githubId: {
+    type: String,
+    unique: true,
+    sparse: true
+   },
 
     verified: {
         type: Boolean,

@@ -20,6 +20,10 @@ const setValidEnv = () => {
     vi.stubEnv("GOOGLE_AUTH_CLIENT_ID", "test-auth-client-id");
     vi.stubEnv("GOOGLE_AUTH_CLIENT_SECRET", "test-auth-client-secret");
 
+    // GitHub Login OAuth
+    vi.stubEnv("GITHUB_CLIENT_ID", "test-github-client-id");
+    vi.stubEnv("GITHUB_CLIENT_SECRET", "test-github-client-secret");
+
     vi.stubEnv("APP_BASE_URL", "http://localhost:3000");
     vi.stubEnv("PORT", "3000");
     vi.stubEnv("NODE_ENV", "development");
@@ -55,6 +59,9 @@ describe("config", () => {
 
             GOOGLE_AUTH_CLIENT_ID: "test-auth-client-id",
             GOOGLE_AUTH_CLIENT_SECRET: "test-auth-client-secret",
+
+            GITHUB_CLIENT_ID: "test-github-client-id",
+            GITHUB_CLIENT_SECRET: "test-github-client-secret",
 
             APP_BASE_URL: "http://localhost:3000",
             PORT: 3000,
@@ -131,6 +138,24 @@ describe("config", () => {
 
         await expect(import("./config.js")).rejects.toThrow(
             "GOOGLE_AUTH_CLIENT_SECRET is not defined in .env file"
+        );
+    });
+
+    it("should throw when GITHUB_CLIENT_ID is missing", async () => {
+        setValidEnv();
+        removeEnv("GITHUB_CLIENT_ID");
+
+        await expect(import("./config.js")).rejects.toThrow(
+            "GITHUB_CLIENT_ID is not defined in .env file"
+        );
+    });
+
+    it("should throw when GITHUB_CLIENT_SECRET is missing", async () => {
+        setValidEnv();
+        removeEnv("GITHUB_CLIENT_SECRET");
+
+        await expect(import("./config.js")).rejects.toThrow(
+            "GITHUB_CLIENT_SECRET is not defined in .env file"
         );
     });
 });

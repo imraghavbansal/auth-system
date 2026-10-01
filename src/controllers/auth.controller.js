@@ -8,11 +8,20 @@ import { generateOtp, getOtpHtml } from "../utils/utils.js";
 import otpModel from "../models/otp.model.js";
 import argon2 from "argon2";
 import loginAttemptModel from "../models/login-attempt.model.js";
+
 import {
     generateGoogleState,
     getGoogleAuthorizationUrl,
     getGoogleUser
 } from "../services/google-auth.service.js";
+
+import {
+    generateGithubState,
+    getGithubAuthorizationUrl,
+    exchangeGithubCode,
+    getGithubUser,
+    getGithubPrimaryEmail
+} from "../services/github-auth.service.js";
 
 const refreshCookieOptions = {
     httpOnly: true,
@@ -159,14 +168,16 @@ export async function login(req, res) {
     }
 
     if (user.authProvider === "google") {
-    return res.status(401).json({
-        message: "This account uses Google login. Please continue with Google."
-    });
+        return res.status(401).json({
+            message:
+                "This account uses Google login. Please continue with Google."
+        });
     }
 
     if (!user.verified) {
         return res.status(403).json({
-            message: "Email not verified. Please verify your email before logging in."
+            message:
+                "Email not verified. Please verify your email before logging in."
         });
     }
 
@@ -230,7 +241,11 @@ export async function login(req, res) {
         { expiresIn: "15m" }
     );
 
-    res.cookie("refreshToken", refreshToken, refreshCookieOptions);
+    res.cookie(
+        "refreshToken",
+        refreshToken,
+        refreshCookieOptions
+    );
 
     res.status(200).json({
         message: "User logged in successfully",
@@ -400,6 +415,156 @@ export async function googleCallback(req, res) {
     });
 }
 
+export async function githubAuth(req, res) {
+    const state = generateGithubState();
+
+    res.cookie("githubOAuthState", state, {
+        httpOnly: true,
+        secure: config.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 10 * 60 * 1000
+    });
+
+    const authorizationUrl = getGithubAuthorizationUrl(state);
+
+    res.redirect(authorizationUrl);
+}
+
+export async function githubCallback(req, res) {
+    const { code, state } = req.query;
+
+    const storedState = req.cookies.githubOAuthState;
+
+    res.clearCookie("githubOAuthState", {
+        httpOnly: true,
+        secure: config.NODE_ENV === "production",
+        sameSite: "lax"
+    });
+
+    if (!state || !storedState || state !== storedState) {
+        return res.status(400).json({
+            message: "Invalid OAuth state"
+        });
+    }
+
+    if (!code) {
+        return res.status(400).json({
+            message: "GitHub authorization code is missing"
+        });
+    }
+
+    let githubAccessToken;
+    let githubUser;
+    let githubEmail;
+
+    try {
+        githubAccessToken = await exchangeGithubCode(code);
+
+        githubUser = await getGithubUser(githubAccessToken);
+
+        githubEmail = await getGithubPrimaryEmail(
+            githubAccessToken
+        );
+    } catch (error) {
+        console.error("GitHub OAuth error:", error);
+
+        return res.status(401).json({
+            message: "Unable to authenticate with GitHub"
+        });
+    }
+
+    if (!githubUser?.id || !githubEmail) {
+        return res.status(401).json({
+            message: "GitHub account information is incomplete"
+        });
+    }
+
+    let user = await userModel.findOne({
+        githubId: String(githubUser.id)
+    });
+
+    if (!user) {
+        const existingUser = await userModel.findOne({
+            email: githubEmail
+        });
+
+        if (existingUser) {
+            return res.status(409).json({
+                message:
+                    "An account with this email already exists. Please log in with your existing account."
+            });
+        }
+
+        let usernameBase =
+            githubUser.login?.replace(
+                /[^a-zA-Z0-9_]/g,
+                "_"
+            ) ||
+            githubEmail
+                .split("@")[0]
+                .replace(/[^a-zA-Z0-9_]/g, "_");
+
+        if (usernameBase.length < 3) {
+            usernameBase = `user_${usernameBase}`;
+        }
+
+        let username = usernameBase;
+        let suffix = 1;
+
+        while (await userModel.exists({ username })) {
+            username = `${usernameBase}_${suffix}`;
+            suffix += 1;
+        }
+
+        user = await userModel.create({
+            username,
+            email: githubEmail,
+            authProvider: "github",
+            githubId: String(githubUser.id),
+            verified: true
+        });
+    }
+
+    const refreshToken = jwt.sign(
+        { id: user._id },
+        config.JWT_SECRET,
+        { expiresIn: "7d" }
+    );
+
+    const refreshTokenHash = crypto
+        .createHash("sha256")
+        .update(refreshToken)
+        .digest("hex");
+
+    await sessionModel.create({
+        userId: user._id,
+        refreshTokenHash,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"]
+    });
+
+    const accessToken = jwt.sign(
+        { id: user._id },
+        config.JWT_SECRET,
+        { expiresIn: "15m" }
+    );
+
+    res.cookie(
+        "refreshToken",
+        refreshToken,
+        refreshCookieOptions
+    );
+
+    res.status(200).json({
+        message: "GitHub login successful",
+        user: {
+            username: user.username,
+            email: user.email
+        },
+        accessToken
+    });
+}
+
 export async function refreshToken(req, res) {
     const refreshToken = req.cookies.refreshToken;
 
@@ -409,7 +574,10 @@ export async function refreshToken(req, res) {
         });
     }
 
-    const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
+    const decoded = jwt.verify(
+        refreshToken,
+        config.JWT_SECRET
+    );
 
     const refreshTokenHash = crypto
         .createHash("sha256")
@@ -450,7 +618,11 @@ export async function refreshToken(req, res) {
 
     await session.save();
 
-    res.cookie("refreshToken", newRefreshToken, refreshCookieOptions);
+    res.cookie(
+        "refreshToken",
+        newRefreshToken,
+        refreshCookieOptions
+    );
 
     res.status(200).json({
         message: "Access token refreshed successfully",
@@ -487,7 +659,10 @@ export async function logout(req, res) {
 
     await session.save();
 
-    res.clearCookie("refreshToken", refreshCookieOptions);
+    res.clearCookie(
+        "refreshToken",
+        refreshCookieOptions
+    );
 
     res.status(200).json({
         message: "User logged out successfully"
@@ -505,7 +680,10 @@ export async function logoutAllSessions(req, res) {
         }
     );
 
-    res.clearCookie("refreshToken", refreshCookieOptions);
+    res.clearCookie(
+        "refreshToken",
+        refreshCookieOptions
+    );
 
     res.status(200).json({
         message: "User logged out from all sessions successfully"
@@ -533,7 +711,9 @@ export async function verifyEmail(req, res) {
     }
 
     if (otpDoc.expiresAt < new Date()) {
-        await otpModel.findByIdAndDelete(otpDoc._id);
+        await otpModel.findByIdAndDelete(
+            otpDoc._id
+        );
 
         return res.status(400).json({
             message: "OTP has expired"
@@ -578,10 +758,14 @@ export async function forgotPassword(req, res) {
         });
     }
 
-    if (user.authProvider === "google") {
-    return res.status(400).json({
-        message: "Google accounts cannot reset their password here. Please continue with Google."
-    });
+    if (
+        user.authProvider === "google" ||
+        user.authProvider === "github"
+    ) {
+        return res.status(400).json({
+            message:
+                "OAuth accounts cannot reset their password here. Please continue with your OAuth provider."
+        });
     }
 
     const resetToken = crypto.randomBytes(32).toString("hex");
@@ -592,20 +776,25 @@ export async function forgotPassword(req, res) {
         .digest("hex");
 
     user.resetPasswordToken = resetTokenHash;
+
     user.resetPasswordTokenExpiresAt = new Date(
         Date.now() + 15 * 60 * 1000
     );
 
     await user.save();
 
-    const resetUrl = `${config.APP_BASE_URL}/api/auth/reset-password?token=${resetToken}&email=${email}`;
+    const resetUrl =
+        `${config.APP_BASE_URL}/api/auth/reset-password?token=${resetToken}&email=${email}`;
 
     try {
         await emailQueue.add("send-email", {
             to: email,
             subject: "Password Reset",
-            text: `Reset your password using this link: ${resetUrl}`,
-            html: `<p>Reset your password using this link:</p><a href="${resetUrl}">${resetUrl}</a>`
+            text:
+                `Reset your password using this link: ${resetUrl}`,
+            html:
+                `<p>Reset your password using this link:</p>` +
+                `<a href="${resetUrl}">${resetUrl}</a>`
         });
     } catch (error) {
         user.resetPasswordToken = null;
@@ -632,10 +821,14 @@ export async function resetPassword(req, res) {
         });
     }
 
-    if (user.authProvider === "google") {
-    return res.status(400).json({
-        message: "Google accounts cannot reset their password here. Please continue with Google."
-    });
+    if (
+        user.authProvider === "google" ||
+        user.authProvider === "github"
+    ) {
+        return res.status(400).json({
+            message:
+                "OAuth accounts cannot reset their password here. Please continue with your OAuth provider."
+        });
     }
 
     const resetTokenHash = crypto
@@ -654,16 +847,20 @@ export async function resetPassword(req, res) {
 
     if (
         !user.resetPasswordTokenExpiresAt ||
-        user.resetPasswordTokenExpiresAt.getTime() < Date.now()
+        user.resetPasswordTokenExpiresAt.getTime() <
+            Date.now()
     ) {
         return res.status(400).json({
             message: "Reset token has expired"
         });
     }
 
-    const hashedPassword = await argon2.hash(password, {
-        type: argon2.argon2id
-    });
+    const hashedPassword = await argon2.hash(
+        password,
+        {
+            type: argon2.argon2id
+        }
+    );
 
     user.password = hashedPassword;
     user.resetPasswordToken = null;
@@ -690,16 +887,21 @@ export async function changePassword(req, res) {
     const { currentPassword, newPassword } = req.body;
     const user = req.user;
 
-    if (user.authProvider === "google") {
+    if (
+        user.authProvider === "google" ||
+        user.authProvider === "github"
+    ) {
         return res.status(400).json({
-            message: "Google accounts cannot change password here. Please continue with Google."
+            message:
+                "OAuth accounts cannot change password here. Please continue with your OAuth provider."
         });
     }
 
-    const isCurrentPasswordValid = await argon2.verify(
-        user.password,
-        currentPassword
-    );
+    const isCurrentPasswordValid =
+        await argon2.verify(
+            user.password,
+            currentPassword
+        );
 
     if (!isCurrentPasswordValid) {
         return res.status(401).json({
@@ -707,9 +909,12 @@ export async function changePassword(req, res) {
         });
     }
 
-    const newPasswordHash = await argon2.hash(newPassword, {
-        type: argon2.argon2id
-    });
+    const newPasswordHash = await argon2.hash(
+        newPassword,
+        {
+            type: argon2.argon2id
+        }
+    );
 
     user.password = newPasswordHash;
 
@@ -755,8 +960,10 @@ export async function resendOtp(req, res) {
 
     if (existingOtp) {
         const cooldown = 60 * 1000;
+
         const timeSinceCreated =
-            Date.now() - existingOtp.createdAt.getTime();
+            Date.now() -
+            existingOtp.createdAt.getTime();
 
         if (timeSinceCreated < cooldown) {
             const remainingSeconds = Math.ceil(
@@ -764,7 +971,8 @@ export async function resendOtp(req, res) {
             );
 
             return res.status(429).json({
-                message: `Please wait ${remainingSeconds} seconds before requesting another OTP`
+                message:
+                    `Please wait ${remainingSeconds} seconds before requesting another OTP`
             });
         }
     }
@@ -782,7 +990,9 @@ export async function resendOtp(req, res) {
         .update(otp)
         .digest("hex");
 
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const expiresAt = new Date(
+        Date.now() + 10 * 60 * 1000
+    );
 
     const otpDoc = await otpModel.create({
         email,
@@ -792,13 +1002,15 @@ export async function resendOtp(req, res) {
         expiresAt
     });
 
-    const otpUrl = `${config.APP_BASE_URL}/api/auth/verify-otp?email=${email}&otp=${otp}`;
+    const otpUrl =
+        `${config.APP_BASE_URL}/api/auth/verify-otp?email=${email}&otp=${otp}`;
 
     try {
         await emailQueue.add("send-email", {
             to: email,
             subject: "OTP Verification",
-            text: `Your OTP is: ${otp}. Use this OTP to verify your email.`,
+            text:
+                `Your OTP is: ${otp}. Use this OTP to verify your email.`,
             html: `
                 <p>Your email verification OTP is:</p>
                 <h2>${otp}</h2>
@@ -809,7 +1021,9 @@ export async function resendOtp(req, res) {
             `
         });
     } catch (error) {
-        await otpModel.findByIdAndDelete(otpDoc._id);
+        await otpModel.findByIdAndDelete(
+            otpDoc._id
+        );
 
         throw error;
     }
@@ -830,7 +1044,9 @@ export async function deleteAccount(req, res) {
         user: user._id
     });
 
-    await userModel.findByIdAndDelete(user._id);
+    await userModel.findByIdAndDelete(
+        user._id
+    );
 
     res.status(200).json({
         message: "Account deleted successfully"
@@ -874,11 +1090,14 @@ export async function changeEmail(req, res) {
 
     if (email === user.email) {
         return res.status(400).json({
-            message: "New email must be different from current email"
+            message:
+                "New email must be different from current email"
         });
     }
 
-    const existingUser = await userModel.findOne({ email });
+    const existingUser = await userModel.findOne({
+        email
+    });
 
     if (existingUser) {
         return res.status(409).json({
@@ -898,7 +1117,9 @@ export async function changeEmail(req, res) {
         .update(otp)
         .digest("hex");
 
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const expiresAt = new Date(
+        Date.now() + 10 * 60 * 1000
+    );
 
     const otpDoc = await otpModel.create({
         email,
@@ -912,16 +1133,18 @@ export async function changeEmail(req, res) {
         await emailQueue.add("send-email", {
             to: email,
             subject: "Email Change Verification",
-            text: `Your OTP is: ${otp}. Use this OTP to verify your new email address.`,
+            text:
+                `Your OTP is: ${otp}. Use this OTP to verify your new email address.`,
             html: `
                 <p>Your email change verification OTP is:</p>
                 <h2>${otp}</h2>
-                <p>This OTP expires in 10 minutes.</p>
                 <p>Enter this OTP to verify your new email address.</p>
             `
         });
     } catch (error) {
-        await otpModel.findByIdAndDelete(otpDoc._id);
+        await otpModel.findByIdAndDelete(
+            otpDoc._id
+        );
 
         throw error;
     }
@@ -954,7 +1177,9 @@ export async function verifyEmailChange(req, res) {
     }
 
     if (otpDoc.expiresAt < new Date()) {
-        await otpModel.findByIdAndDelete(otpDoc._id);
+        await otpModel.findByIdAndDelete(
+            otpDoc._id
+        );
 
         return res.status(400).json({
             message: "OTP has expired"
@@ -981,7 +1206,9 @@ export async function verifyEmailChange(req, res) {
         userId: user._id
     });
 
-    await otpModel.findByIdAndDelete(otpDoc._id);
+    await otpModel.findByIdAndDelete(
+        otpDoc._id
+    );
 
     res.status(200).json({
         message: "Email changed successfully",
@@ -999,7 +1226,9 @@ export async function getSessions(req, res) {
     const sessions = await sessionModel.find({
         userId: user._id,
         revoked: false
-    }).select("_id ip userAgent createdAt updatedAt");
+    }).select(
+        "_id ip userAgent createdAt updatedAt"
+    );
 
     res.status(200).json({
         message: "Sessions fetched successfully",

@@ -38,6 +38,14 @@ if (!process.env.GOOGLE_AUTH_CLIENT_SECRET) {
     throw new Error("GOOGLE_AUTH_CLIENT_SECRET is not defined in .env file");
 }
 
+if (!process.env.GITHUB_CLIENT_ID) {
+    throw new Error("GITHUB_CLIENT_ID is not defined in .env file");
+}
+
+if (!process.env.GITHUB_CLIENT_SECRET) {
+    throw new Error("GITHUB_CLIENT_SECRET is not defined in .env file");
+}
+
 const config = {
     MONGO_URI: process.env.MONGO_URI,
     JWT_SECRET: process.env.JWT_SECRET,
@@ -49,7 +57,9 @@ const config = {
     PORT: Number(process.env.PORT) || 3000,
     NODE_ENV: process.env.NODE_ENV || "development",
     GOOGLE_AUTH_CLIENT_ID: process.env.GOOGLE_AUTH_CLIENT_ID,
-    GOOGLE_AUTH_CLIENT_SECRET: process.env.GOOGLE_AUTH_CLIENT_SECRET
+    GOOGLE_AUTH_CLIENT_SECRET: process.env.GOOGLE_AUTH_CLIENT_SECRET,
+    GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID,
+    GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET
 };
 
 export default config;

@@ -173,6 +173,48 @@ authRouter.get(
 
 /**
  * @openapi
+ * /api/auth/github:
+ *   get:
+ *     tags:
+ *       - Authentication
+ *     summary: Redirect to GitHub authentication
+ *     description: Redirects the user to the GitHub authentication page.
+ *     responses:
+ *       302:
+ *         description: Redirected to GitHub authentication page
+ */
+authRouter.get(
+    "/github",
+    asyncHandler(authController.githubAuth)
+);
+
+/**
+ * @openapi
+ * /api/auth/github/callback:
+ *   get:
+ *     tags:
+ *       - Authentication
+ *     summary: Handle GitHub authentication callback
+ *     description: Handles the callback from GitHub authentication and exchanges the authorization code for an access token.
+ *     responses:
+ *       200:
+ *         description: User authenticated successfully
+ *       400:
+ *         description: Invalid OAuth state or authorization code
+ *       401:
+ *         description: Unable to authenticate with GitHub
+ *       409:
+ *         description: An account with this email already exists
+ *       500:
+ *         description: Internal server error
+ */
+authRouter.get(
+    "/github/callback",
+    asyncHandler(authController.githubCallback)
+);
+
+/**
+ * @openapi
  * /api/auth/get-me:
  *   get:
  *     tags:

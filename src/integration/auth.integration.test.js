@@ -35,6 +35,14 @@ vi.mock("../services/google-auth.service.js", () => ({
     getGoogleUser: vi.fn()
 }));
 
+vi.mock("../services/github-auth.service.js", () => ({
+    generateGithubState: vi.fn(),
+    getGithubAuthorizationUrl: vi.fn(),
+    exchangeGithubCode: vi.fn(),
+    getGithubUser: vi.fn(),
+    getGithubPrimaryEmail: vi.fn()
+}));
+
 import app from "../app.js";
 import config from "../config/config.js";
 import userModel from "../models/user.model.js";
@@ -42,11 +50,20 @@ import otpModel from "../models/otp.model.js";
 import sessionModel from "../models/session.model.js";
 import loginAttemptModel from "../models/login-attempt.model.js";
 import emailQueue from "../queues/email.queue.js";
+
 import {
     generateGoogleState,
     getGoogleAuthorizationUrl,
     getGoogleUser
 } from "../services/google-auth.service.js";
+
+import {
+    generateGithubState,
+    getGithubAuthorizationUrl,
+    exchangeGithubCode,
+    getGithubUser,
+    getGithubPrimaryEmail
+} from "../services/github-auth.service.js";
 
 const TEST_PASSWORD = "Password123!";
 const TEST_PASSWORD_2 = "NewPassword123!";
@@ -57,7 +74,8 @@ const createUser = async ({
     password = TEST_PASSWORD,
     verified = true,
     authProvider = "local",
-    googleId
+    googleId,
+    githubId
 } = {}) => {
     const hashedPassword =
         authProvider === "local"
@@ -72,7 +90,8 @@ const createUser = async ({
         password: hashedPassword,
         verified,
         authProvider,
-        ...(googleId ? { googleId } : {})
+        ...(googleId ? { googleId } : {}),
+        ...(githubId ? { githubId } : {})
     });
 };
 
@@ -131,6 +150,12 @@ afterEach(async () => {
     generateGoogleState.mockReset();
     getGoogleAuthorizationUrl.mockReset();
     getGoogleUser.mockReset();
+
+    generateGithubState.mockReset();
+    getGithubAuthorizationUrl.mockReset();
+    exchangeGithubCode.mockReset();
+    getGithubUser.mockReset();
+    getGithubPrimaryEmail.mockReset();
 
     emailQueue.add.mockResolvedValue({
         id: "test-email-job"
@@ -707,6 +732,497 @@ describe("Authentication security and edge cases", () => {
         });
     });
 
+    describe("GitHub OAuth", () => {
+    it("redirects to GitHub authentication and stores OAuth state", async () => {
+        const state = "test-github-state";
+
+        const authorizationUrl =
+            "https://github.com/login/oauth/authorize?test=true";
+
+        generateGithubState.mockReturnValue(state);
+
+        getGithubAuthorizationUrl.mockReturnValue(
+            authorizationUrl
+        );
+
+        const response = await request(app)
+            .get("/api/auth/github");
+
+        expect(response.status).toBe(302);
+
+        expect(response.headers.location).toBe(
+            authorizationUrl
+        );
+
+        expect(generateGithubState).toHaveBeenCalledTimes(1);
+
+        expect(getGithubAuthorizationUrl).toHaveBeenCalledWith(
+            state
+        );
+
+        expect(response.headers["set-cookie"]).toBeDefined();
+
+        const stateCookie = response.headers["set-cookie"].find(
+            (cookie) =>
+                cookie.startsWith("githubOAuthState=")
+        );
+
+        expect(stateCookie).toBeDefined();
+
+        expect(stateCookie).toContain(
+            `githubOAuthState=${state}`
+        );
+
+        expect(stateCookie).toContain("HttpOnly");
+        expect(stateCookie).toContain("SameSite=Lax");
+    });
+
+    it("rejects GitHub callback when OAuth state is missing", async () => {
+        const response = await request(app)
+            .get("/api/auth/github/callback")
+            .query({
+                code: "test-code"
+            });
+
+        expect(response.status).toBe(400);
+
+        expect(response.body.message).toBe(
+            "Invalid OAuth state"
+        );
+
+        expect(exchangeGithubCode).not.toHaveBeenCalled();
+    });
+
+    it("rejects GitHub callback when OAuth state is invalid", async () => {
+        const response = await request(app)
+            .get("/api/auth/github/callback")
+            .set(
+                "Cookie",
+                "githubOAuthState=correct-state"
+            )
+            .query({
+                code: "test-code",
+                state: "wrong-state"
+            });
+
+        expect(response.status).toBe(400);
+
+        expect(response.body.message).toBe(
+            "Invalid OAuth state"
+        );
+
+        expect(exchangeGithubCode).not.toHaveBeenCalled();
+    });
+
+    it("rejects GitHub callback when authorization code is missing", async () => {
+        const response = await request(app)
+            .get("/api/auth/github/callback")
+            .set(
+                "Cookie",
+                "githubOAuthState=valid-state"
+            )
+            .query({
+                state: "valid-state"
+            });
+
+        expect(response.status).toBe(400);
+
+        expect(response.body.message).toBe(
+            "GitHub authorization code is missing"
+        );
+
+        expect(exchangeGithubCode).not.toHaveBeenCalled();
+    });
+
+    it("rejects GitHub callback when GitHub authentication fails", async () => {
+        exchangeGithubCode.mockRejectedValueOnce(
+            new Error("GitHub token exchange failed")
+        );
+
+        const response = await request(app)
+            .get("/api/auth/github/callback")
+            .set(
+                "Cookie",
+                "githubOAuthState=valid-state"
+            )
+            .query({
+                code: "invalid-github-code",
+                state: "valid-state"
+            });
+
+        expect(response.status).toBe(401);
+
+        expect(response.body.message).toBe(
+            "Unable to authenticate with GitHub"
+        );
+
+        expect(exchangeGithubCode).toHaveBeenCalledWith(
+            "invalid-github-code"
+        );
+
+        expect(getGithubUser).not.toHaveBeenCalled();
+    });
+
+    it("rejects GitHub callback when GitHub account information is incomplete", async () => {
+        exchangeGithubCode.mockResolvedValueOnce(
+            "github-access-token"
+        );
+
+        getGithubUser.mockResolvedValueOnce({
+            id: null,
+            login: "githubuser",
+            name: "GitHub User"
+        });
+
+        getGithubPrimaryEmail.mockResolvedValueOnce(
+            "github@example.com"
+        );
+
+        const response = await request(app)
+            .get("/api/auth/github/callback")
+            .set(
+                "Cookie",
+                "githubOAuthState=valid-state"
+            )
+            .query({
+                code: "github-code",
+                state: "valid-state"
+            });
+
+        expect(response.status).toBe(401);
+
+        expect(response.body.message).toBe(
+            "GitHub account information is incomplete"
+        );
+
+        expect(exchangeGithubCode).toHaveBeenCalledWith(
+            "github-code"
+        );
+
+        expect(getGithubUser).toHaveBeenCalledWith(
+            "github-access-token"
+        );
+
+        expect(getGithubPrimaryEmail).toHaveBeenCalledWith(
+            "github-access-token"
+        );
+    });
+
+    it("rejects GitHub callback when GitHub email information is incomplete", async () => {
+        exchangeGithubCode.mockResolvedValueOnce(
+            "github-access-token"
+        );
+
+        getGithubUser.mockResolvedValueOnce({
+            id: "github-user-123",
+            login: "githubuser",
+            name: "GitHub User"
+        });
+
+        getGithubPrimaryEmail.mockResolvedValueOnce(null);
+
+        const response = await request(app)
+            .get("/api/auth/github/callback")
+            .set(
+                "Cookie",
+                "githubOAuthState=valid-state"
+            )
+            .query({
+                code: "github-code",
+                state: "valid-state"
+            });
+
+        expect(response.status).toBe(401);
+
+        expect(response.body.message).toBe(
+            "GitHub account information is incomplete"
+        );
+
+        expect(exchangeGithubCode).toHaveBeenCalledWith(
+            "github-code"
+        );
+
+        expect(getGithubUser).toHaveBeenCalledWith(
+            "github-access-token"
+        );
+
+        expect(getGithubPrimaryEmail).toHaveBeenCalledWith(
+            "github-access-token"
+        );
+    });
+
+    it("creates a new GitHub user and session successfully", async () => {
+        exchangeGithubCode.mockResolvedValueOnce(
+            "github-access-token"
+        );
+
+        getGithubUser.mockResolvedValueOnce({
+            id: "github-new-user-123",
+            login: "newgithubuser",
+            name: "New GitHub User"
+        });
+
+        getGithubPrimaryEmail.mockResolvedValueOnce(
+            "newgithubuser@example.com"
+        );
+
+        const response = await request(app)
+            .get("/api/auth/github/callback")
+            .set(
+                "Cookie",
+                "githubOAuthState=valid-state"
+            )
+            .set(
+                "User-Agent",
+                "github-oauth-integration-test"
+            )
+            .query({
+                code: "github-code",
+                state: "valid-state"
+            });
+
+        expect(response.status).toBe(200);
+
+        expect(response.body.message).toBe(
+            "GitHub login successful"
+        );
+
+        expect(response.body.user).toEqual({
+            username: "newgithubuser",
+            email: "newgithubuser@example.com"
+        });
+
+        expect(response.body.accessToken).toBeDefined();
+
+        const user = await userModel.findOne({
+            githubId: "github-new-user-123"
+        });
+
+        expect(user).not.toBeNull();
+
+        expect(user.email).toBe(
+            "newgithubuser@example.com"
+        );
+
+        expect(user.authProvider).toBe("github");
+
+        expect(user.githubId).toBe(
+            "github-new-user-123"
+        );
+
+        expect(user.verified).toBe(true);
+
+        expect(user.password).toBeNull();
+
+        const sessions = await sessionModel.find({
+            userId: user._id
+        });
+
+        expect(sessions).toHaveLength(1);
+
+        expect(sessions[0].revoked).toBe(false);
+
+        expect(sessions[0].refreshTokenHash).toBeDefined();
+
+        expect(sessions[0].userAgent).toBe(
+            "github-oauth-integration-test"
+        );
+
+        const payload = jwt.verify(
+            response.body.accessToken,
+            config.JWT_SECRET
+        );
+
+        expect(payload.id).toBe(
+            user._id.toString()
+        );
+
+        expect(response.headers["set-cookie"]).toBeDefined();
+
+        const refreshToken =
+            getRefreshTokenFromCookies(
+                response.headers["set-cookie"]
+            );
+
+        expect(refreshToken).not.toBeNull();
+
+        const refreshTokenHash = crypto
+            .createHash("sha256")
+            .update(refreshToken)
+            .digest("hex");
+
+        expect(sessions[0].refreshTokenHash).toBe(
+            refreshTokenHash
+        );
+
+        expect(exchangeGithubCode).toHaveBeenCalledWith(
+            "github-code"
+        );
+
+        expect(getGithubUser).toHaveBeenCalledWith(
+            "github-access-token"
+        );
+
+        expect(getGithubPrimaryEmail).toHaveBeenCalledWith(
+            "github-access-token"
+        );
+    });
+
+    it("logs in an existing GitHub user and creates a new session", async () => {
+        const user = await createUser({
+            username: "existing_github_user",
+            email: "existinggithub@example.com",
+            authProvider: "github",
+            githubId: "existing-github-id",
+            verified: true
+        });
+
+        exchangeGithubCode.mockResolvedValueOnce(
+            "github-access-token"
+        );
+
+        getGithubUser.mockResolvedValueOnce({
+            id: "existing-github-id",
+            login: "existinggithub",
+            name: "Existing GitHub User"
+        });
+
+        getGithubPrimaryEmail.mockResolvedValueOnce(
+            "existinggithub@example.com"
+        );
+
+        const response = await request(app)
+            .get("/api/auth/github/callback")
+            .set(
+                "Cookie",
+                "githubOAuthState=valid-state"
+            )
+            .set(
+                "User-Agent",
+                "github-existing-user-test"
+            )
+            .query({
+                code: "github-code",
+                state: "valid-state"
+            });
+
+        expect(response.status).toBe(200);
+
+        expect(response.body.message).toBe(
+            "GitHub login successful"
+        );
+
+        expect(response.body.user).toEqual({
+            username: "existing_github_user",
+            email: "existinggithub@example.com"
+        });
+
+        expect(response.body.accessToken).toBeDefined();
+
+        const users = await userModel.find({
+            githubId: "existing-github-id"
+        });
+
+        expect(users).toHaveLength(1);
+
+        expect(users[0]._id.toString()).toBe(
+            user._id.toString()
+        );
+
+        const sessions = await sessionModel.find({
+            userId: user._id
+        });
+
+        expect(sessions).toHaveLength(1);
+
+        expect(sessions[0].revoked).toBe(false);
+
+        expect(sessions[0].userAgent).toBe(
+            "github-existing-user-test"
+        );
+
+        expect(exchangeGithubCode).toHaveBeenCalledWith(
+            "github-code"
+        );
+
+        expect(getGithubUser).toHaveBeenCalledWith(
+            "github-access-token"
+        );
+
+        expect(getGithubPrimaryEmail).toHaveBeenCalledWith(
+            "github-access-token"
+        );
+    });
+
+    it("rejects GitHub login when the email already belongs to a local account", async () => {
+        const localUser = await createUser({
+            username: "existing_local_user",
+            email: "localaccount@example.com",
+            authProvider: "local",
+            verified: true
+        });
+
+        exchangeGithubCode.mockResolvedValueOnce(
+            "github-access-token"
+        );
+
+        getGithubUser.mockResolvedValueOnce({
+            id: "github-conflict-id",
+            login: "localaccount",
+            name: "Local Account"
+        });
+
+        getGithubPrimaryEmail.mockResolvedValueOnce(
+            "localaccount@example.com"
+        );
+
+        const response = await request(app)
+            .get("/api/auth/github/callback")
+            .set(
+                "Cookie",
+                "githubOAuthState=valid-state"
+            )
+            .query({
+                code: "github-code",
+                state: "valid-state"
+            });
+
+        expect(response.status).toBe(409);
+
+        expect(response.body.message).toBe(
+            "An account with this email already exists. Please log in with your existing account."
+        );
+
+        const user = await userModel.findById(
+            localUser._id
+        );
+
+        expect(user).not.toBeNull();
+
+        expect(user.authProvider).toBe("local");
+
+        expect(user.githubId).toBeUndefined();
+
+        const sessions = await sessionModel.find({
+            userId: localUser._id
+        });
+
+        expect(sessions).toHaveLength(0);
+
+        expect(exchangeGithubCode).toHaveBeenCalledWith(
+            "github-code"
+        );
+
+        expect(getGithubUser).toHaveBeenCalledWith(
+            "github-access-token"
+        );
+
+        expect(getGithubPrimaryEmail).toHaveBeenCalledWith(
+            "github-access-token"
+        );
+    });
+});
+
     describe("Email verification OTP", () => {
         it("rejects an invalid OTP", async () => {
             const user = await createUser({
@@ -721,7 +1237,9 @@ describe("Authentication security and edge cases", () => {
                     .update("123456")
                     .digest("hex"),
                 purpose: "EMAIL_VERIFICATION",
-                expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+                expiresAt: new Date(
+                    Date.now() + 10 * 60 * 1000
+                )
             });
 
             const response = await request(app)
@@ -733,7 +1251,9 @@ describe("Authentication security and edge cases", () => {
 
             expect(response.status).toBe(400);
 
-            const updatedUser = await userModel.findById(user._id);
+            const updatedUser = await userModel.findById(
+                user._id
+            );
 
             expect(updatedUser.verified).toBe(false);
         });
@@ -765,7 +1285,9 @@ describe("Authentication security and edge cases", () => {
 
             expect(response.status).toBe(400);
 
-            const deletedOtp = await otpModel.findById(otp._id);
+            const deletedOtp = await otpModel.findById(
+                otp._id
+            );
 
             expect(deletedOtp).toBeNull();
         });
@@ -787,7 +1309,9 @@ describe("Authentication security and edge cases", () => {
                 user: user._id,
                 otpHash,
                 purpose: "EMAIL_VERIFICATION",
-                expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+                expiresAt: new Date(
+                    Date.now() + 10 * 60 * 1000
+                )
             });
 
             const response = await request(app)
@@ -799,7 +1323,9 @@ describe("Authentication security and edge cases", () => {
 
             expect(response.status).toBe(200);
 
-            const updatedUser = await userModel.findById(user._id);
+            const updatedUser = await userModel.findById(
+                user._id
+            );
 
             expect(updatedUser.verified).toBe(true);
 
@@ -834,10 +1360,15 @@ describe("Authentication security and edge cases", () => {
 
             expect(response.status).toBe(200);
 
-            const updatedUser = await userModel.findById(user._id);
+            const updatedUser = await userModel.findById(
+                user._id
+            );
 
             expect(updatedUser.resetPasswordToken).not.toBeNull();
-            expect(updatedUser.resetPasswordTokenExpiresAt).not.toBeNull();
+            expect(
+                updatedUser.resetPasswordTokenExpiresAt
+            ).not.toBeNull();
+
             expect(
                 updatedUser.resetPasswordTokenExpiresAt.getTime()
             ).toBeGreaterThan(Date.now());
@@ -860,10 +1391,14 @@ describe("Authentication security and edge cases", () => {
 
             expect(response.status).toBe(500);
 
-            const updatedUser = await userModel.findById(user._id);
+            const updatedUser = await userModel.findById(
+                user._id
+            );
 
             expect(updatedUser.resetPasswordToken).toBeNull();
-            expect(updatedUser.resetPasswordTokenExpiresAt).toBeNull();
+            expect(
+                updatedUser.resetPasswordTokenExpiresAt
+            ).toBeNull();
         });
     });
 
@@ -893,7 +1428,9 @@ describe("Authentication security and edge cases", () => {
                 .digest("hex");
 
             user.resetPasswordToken = tokenHash;
-            user.resetPasswordTokenExpiresAt = new Date(Date.now() - 1000);
+            user.resetPasswordTokenExpiresAt = new Date(
+                Date.now() - 1000
+            );
 
             await user.save();
 
@@ -956,10 +1493,17 @@ describe("Authentication security and edge cases", () => {
 
             expect(response.status).toBe(200);
 
-            const updatedUser = await userModel.findById(user._id);
+            const updatedUser = await userModel.findById(
+                user._id
+            );
 
-            expect(updatedUser.resetPasswordToken).toBeNull();
-            expect(updatedUser.resetPasswordTokenExpiresAt).toBeNull();
+            expect(
+                updatedUser.resetPasswordToken
+            ).toBeNull();
+
+            expect(
+                updatedUser.resetPasswordTokenExpiresAt
+            ).toBeNull();
 
             const passwordMatches = await argon2.verify(
                 updatedUser.password,
@@ -973,7 +1517,9 @@ describe("Authentication security and edge cases", () => {
             });
 
             expect(sessions).toHaveLength(2);
-            expect(sessions.every((session) => session.revoked)).toBe(true);
+            expect(
+                sessions.every((session) => session.revoked)
+            ).toBe(true);
         });
     });
 
@@ -981,11 +1527,16 @@ describe("Authentication security and edge cases", () => {
         it("rejects an incorrect current password", async () => {
             const user = await createUser();
 
-            const accessToken = createAccessToken(user._id.toString());
+            const accessToken = createAccessToken(
+                user._id.toString()
+            );
 
             const response = await request(app)
                 .post("/api/auth/change-password")
-                .set("Authorization", `Bearer ${accessToken}`)
+                .set(
+                    "Authorization",
+                    `Bearer ${accessToken}`
+                )
                 .send({
                     currentPassword: "WrongPassword123!",
                     newPassword: TEST_PASSWORD_2
@@ -1018,11 +1569,16 @@ describe("Authentication security and edge cases", () => {
                 }
             ]);
 
-            const accessToken = createAccessToken(user._id.toString());
+            const accessToken = createAccessToken(
+                user._id.toString()
+            );
 
             const response = await request(app)
                 .post("/api/auth/change-password")
-                .set("Authorization", `Bearer ${accessToken}`)
+                .set(
+                    "Authorization",
+                    `Bearer ${accessToken}`
+                )
                 .send({
                     currentPassword: TEST_PASSWORD,
                     newPassword: TEST_PASSWORD_2
@@ -1030,7 +1586,9 @@ describe("Authentication security and edge cases", () => {
 
             expect(response.status).toBe(200);
 
-            const updatedUser = await userModel.findById(user._id);
+            const updatedUser = await userModel.findById(
+                user._id
+            );
 
             const passwordMatches = await argon2.verify(
                 updatedUser.password,
@@ -1044,7 +1602,9 @@ describe("Authentication security and edge cases", () => {
             });
 
             expect(sessions).toHaveLength(2);
-            expect(sessions.every((session) => session.revoked)).toBe(true);
+            expect(
+                sessions.every((session) => session.revoked)
+            ).toBe(true);
         });
     });
 
@@ -1062,11 +1622,18 @@ describe("Authentication security and edge cases", () => {
                 userAgent: "test-agent"
             });
 
-            const accessToken = createAccessToken(user._id.toString());
+            const accessToken = createAccessToken(
+                user._id.toString()
+            );
 
             const response = await request(app)
-                .delete(`/api/auth/sessions/${targetSession._id}`)
-                .set("Authorization", `Bearer ${accessToken}`);
+                .delete(
+                    `/api/auth/sessions/${targetSession._id}`
+                )
+                .set(
+                    "Authorization",
+                    `Bearer ${accessToken}`
+                );
 
             expect(response.status).toBe(200);
 
@@ -1098,11 +1665,16 @@ describe("Authentication security and edge cases", () => {
 
             const response = await request(app)
                 .get("/api/auth/logout")
-                .set("Cookie", `refreshToken=${refreshToken}`);
+                .set(
+                    "Cookie",
+                    `refreshToken=${refreshToken}`
+                );
 
             expect(response.status).toBe(200);
 
-            const updatedSession = await sessionModel.findById(session._id);
+            const updatedSession = await sessionModel.findById(
+                session._id
+            );
 
             expect(updatedSession.revoked).toBe(true);
         });
@@ -1142,11 +1714,16 @@ describe("Authentication security and edge cases", () => {
                 }
             ]);
 
-            const accessToken = createAccessToken(user._id.toString());
+            const accessToken = createAccessToken(
+                user._id.toString()
+            );
 
             const response = await request(app)
                 .get("/api/auth/logout-all")
-                .set("Authorization", `Bearer ${accessToken}`);
+                .set(
+                    "Authorization",
+                    `Bearer ${accessToken}`
+                );
 
             expect(response.status).toBe(200);
 
@@ -1155,7 +1732,9 @@ describe("Authentication security and edge cases", () => {
             });
 
             expect(sessions).toHaveLength(3);
-            expect(sessions.every((session) => session.revoked)).toBe(true);
+            expect(
+                sessions.every((session) => session.revoked)
+            ).toBe(true);
         });
     });
 });
