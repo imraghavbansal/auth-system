@@ -54,4 +54,3 @@ npm start
 ## Project Status
 
 Built as a learning project to understand how authentication systems work behind the scenes and how authentication is implemented in a real backend application.
-# auth-system
