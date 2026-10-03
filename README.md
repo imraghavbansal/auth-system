@@ -40,11 +40,6 @@ npm install
 
 Create a `.env` file and add the required environment variables.
 
-```env
-MONGODB_URI=your_mongodb_connection_string
-SESSION_SECRET=your_session_secret
-```
-
 ### 4. Start the application
 
 ```bash
